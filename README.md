@@ -17,36 +17,6 @@ The Enron email dataset contains approximately 500,000 emails from about 150 use
 -   Python 3.8 or higher
 -   Enron email dataset (`maildir` folder)
 
-### Common Setup Issues
-
-#### Missing distutils Module
-
-If you encounter `ModuleNotFoundError: No module named 'distutils'` (common with Python 3.12+), try one of these solutions:
-
-**For macOS:**
-
-```
-# If you use Homebrew
-brew install python-distutils
-
-# Or install setuptools
-pip3 install --user setuptools
-```
-
-**For Ubuntu/Debian:**
-
-```
-sudo apt-get install python3-distutils
-```
-
-**For Windows:**
-
-```
-python -m pip install setuptools
-```
-
-The setup scripts have been updated to try to handle this automatically, but manual installation might be needed in some cases.
-
 ### Setting up the Environment
 
 #### For macOS/Linux:
@@ -136,8 +106,4 @@ The setup scripts have been updated to try to handle this automatically, but man
 
 ## Performance
 
-The model typically achieves an accuracy of 70-80% on the test set, depending on the specific emails and users included in the dataset.
-
-## License
-
-This project is provided for educational purposes only.
+idk
