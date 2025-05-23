@@ -1,2 +1,4 @@
 maildir/*
 env
+
+.DS_Store
