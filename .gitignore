@@ -2,3 +2,6 @@ maildir/*
 env
 
 .DS_Store
+
+processed_emails.csv
+models/*
