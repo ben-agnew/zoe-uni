@@ -5,3 +5,6 @@ env
 
 processed_emails.csv
 models/*
+
+test_data.csv
+train_data.csv

@@ -37,6 +37,8 @@ from sklearn.pipeline import Pipeline
 # Constants
 DATA_DIR = "enron_data"
 PROCESSED_DATA_FILE = "processed_emails.csv"
+TRAIN_DATA_FILE = "train_data.csv"
+TEST_DATA_FILE = "test_data.csv"
 NUM_TOP_USERS = 150  # Number of unique users to include
 MODEL_DIR = "models"  # Directory to store models
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_model.joblib")
@@ -134,17 +136,75 @@ def process_emails(maildir_path):
     
     return df
 
-def build_naive_bayes_classifier(emails_df, save=True):
-    """Build and evaluate a Naive Bayes classifier."""
+def create_and_save_train_test_split(emails_df, test_size=0.2, random_state=42):
+    """Create and save train/test splits."""
+    print("Creating and saving train/test splits...")
+    
     # Split data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
         emails_df['content'], 
         emails_df['sender'],
-        test_size=0.2, 
-        random_state=42,
+        test_size=test_size, 
+        random_state=random_state,
         stratify=emails_df['sender']
     )
     
+    # Create DataFrames for train and test sets
+    train_df = pd.DataFrame({
+        'content': X_train,
+        'sender': y_train
+    })
+    
+    test_df = pd.DataFrame({
+        'content': X_test,
+        'sender': y_test
+    })
+    
+    # Save the splits
+    train_df.to_csv(TRAIN_DATA_FILE, index=False)
+    test_df.to_csv(TEST_DATA_FILE, index=False)
+    
+    print(f"Train data saved to {TRAIN_DATA_FILE} ({len(train_df)} samples)")
+    print(f"Test data saved to {TEST_DATA_FILE} ({len(test_df)} samples)")
+    
+    return train_df, test_df
+
+def load_train_test_split():
+    """Load existing train/test splits."""
+    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
+        return None, None
+    
+    print(f"Loading train/test splits from saved files...")
+    train_df = pd.read_csv(TRAIN_DATA_FILE)
+    test_df = pd.read_csv(TEST_DATA_FILE)
+    
+    print(f"Loaded train data: {len(train_df)} samples")
+    print(f"Loaded test data: {len(test_df)} samples")
+    
+    return train_df, test_df
+
+def get_or_create_train_test_split(emails_df):
+    """Get existing train/test split or create new one if it doesn't exist."""
+    train_df, test_df = load_train_test_split()
+    
+    if train_df is None or test_df is None:
+        print("No existing train/test split found. Creating new split...")
+        train_df, test_df = create_and_save_train_test_split(emails_df)
+    else:
+        print("Using existing train/test split.")
+        # Verify that the split is still valid for the current dataset
+        expected_total = len(emails_df)
+        actual_total = len(train_df) + len(test_df)
+        
+        if abs(expected_total - actual_total) > 100:  # Allow some tolerance
+            print(f"Warning: Train/test split size ({actual_total}) doesn't match current dataset ({expected_total})")
+            print("Creating new train/test split...")
+            train_df, test_df = create_and_save_train_test_split(emails_df)
+    
+    return train_df, test_df
+
+def build_naive_bayes_classifier(train_df, test_df, save=True):
+    """Build and evaluate a Naive Bayes classifier."""
     # Create a pipeline with TF-IDF and Multinomial Naive Bayes
     pipeline = Pipeline([
         ('tfidf', TfidfVectorizer(
@@ -158,33 +218,28 @@ def build_naive_bayes_classifier(emails_df, save=True):
     
     # Train the model
     print("Training the Naive Bayes classifier...")
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(train_df['content'], train_df['sender'])
     
     # Evaluate the model
-    y_pred = pipeline.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
     print(f"Accuracy: {accuracy:.4f}")
     
     # Print detailed classification report
     print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
+    print(classification_report(test_df['sender'], y_pred))
     
     # Save the model if requested
     if save:
-        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, emails_df)
+        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, train_df)
     
     return pipeline
 
-def optimize_hyperparameters(emails_df, save=True):
+def optimize_hyperparameters(train_df, test_df, save=True):
     """Optimize hyperparameters using GridSearchCV."""
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        emails_df['content'], 
-        emails_df['sender'],
-        test_size=0.2, 
-        random_state=42,
-        stratify=emails_df['sender']
-    )
+    # Use the pre-split data
+    X_train, y_train = train_df['content'], train_df['sender']
+    X_test, y_test = test_df['content'], test_df['sender']
     
     # Define pipeline
     pipeline = Pipeline([
@@ -217,7 +272,7 @@ def optimize_hyperparameters(emails_df, save=True):
     
     # Save the model if requested
     if save:
-        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", accuracy, emails_df)
+        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", accuracy, train_df)
     
     return best_model
 
@@ -306,15 +361,42 @@ def show_model_info():
             print(f"    - {user}: {count}")
     print()
 
+print()
+
+def show_split_info():
+    """Display information about the train/test split."""
+    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
+        print("No train/test split files found.")
+        return
+    
+    train_df = pd.read_csv(TRAIN_DATA_FILE)
+    test_df = pd.read_csv(TEST_DATA_FILE)
+    
+    print("\n=== Train/Test Split Information ===")
+    print(f"Train set: {len(train_df)} samples")
+    print(f"Test set: {len(test_df)} samples")
+    print(f"Total: {len(train_df) + len(test_df)} samples")
+    print(f"Test ratio: {len(test_df) / (len(train_df) + len(test_df)):.1%}")
+    print(f"Unique senders: {len(train_df['sender'].unique())}")
+    
+    # Show distribution of top senders
+    print("\nTop senders in training set:")
+    for sender, count in train_df['sender'].value_counts().head(5).items():
+        test_count = test_df[test_df['sender'] == sender].shape[0]
+        print(f"  - {sender}: {count} train, {test_count} test")
+
 def train_models(emails_df):
     """Train both baseline and optimized models."""
+    # Get or create train/test split
+    train_df, test_df = get_or_create_train_test_split(emails_df)
+    
     # Train baseline model
     print("\n=== Training Baseline Model ===")
-    baseline_model = build_naive_bayes_classifier(emails_df)
+    baseline_model = build_naive_bayes_classifier(train_df, test_df)
     
     # Optimize hyperparameters (optional, can be time-consuming)
     print("\n=== Optimizing Hyperparameters ===")
-    optimized_model = optimize_hyperparameters(emails_df)
+    optimized_model = optimize_hyperparameters(train_df, test_df)
     
     return baseline_model, optimized_model
 
@@ -339,14 +421,22 @@ def main():
     
     # Check if models exist
     has_saved_models = os.path.exists(BASELINE_MODEL_FILE) and os.path.exists(OPTIMIZED_MODEL_FILE)
+    has_saved_splits = os.path.exists(TRAIN_DATA_FILE) and os.path.exists(TEST_DATA_FILE)
     
     if has_saved_models:
         # Display saved model information
         show_model_info()
         
+        # Display train/test split information
+        if has_saved_splits:
+            show_split_info()
+        
         # Ask if user wants to use saved models
-        print("Found previously trained models.")
-        choice = input("Would you like to (1) use saved models or (2) retrain models? Enter 1 or 2: ")
+        print("\nFound previously trained models.")
+        if has_saved_splits:
+            choice = input("Would you like to (1) use saved models, (2) retrain models with existing split, or (3) recreate split and retrain? Enter 1, 2, or 3: ")
+        else:
+            choice = input("Would you like to (1) use saved models or (2) retrain models? Enter 1 or 2: ")
         
         if choice == '1':
             # Load emails dataset for sample prediction
@@ -360,8 +450,21 @@ def main():
             if baseline_model is None or optimized_model is None:
                 print("Error loading models. Will train new models.")
                 baseline_model, optimized_model = train_models(emails_df)
+        elif choice == '3' and has_saved_splits:
+            # Recreate train/test split and retrain models
+            print(f"Using existing maildir data at: {maildir_path}")
+            emails_df = process_emails(maildir_path)
+            
+            # Remove existing split files to force recreation
+            if os.path.exists(TRAIN_DATA_FILE):
+                os.remove(TRAIN_DATA_FILE)
+            if os.path.exists(TEST_DATA_FILE):
+                os.remove(TEST_DATA_FILE)
+            print("Removed existing train/test split files.")
+            
+            baseline_model, optimized_model = train_models(emails_df)
         else:
-            # Process emails and train models
+            # Process emails and train models (choice == '2' or choice == '2' when no splits)
             print(f"Using existing maildir data at: {maildir_path}")
             emails_df = process_emails(maildir_path)
             baseline_model, optimized_model = train_models(emails_df)
