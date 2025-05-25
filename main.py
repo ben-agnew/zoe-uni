@@ -22,17 +22,32 @@ Or simply:
 
 import datetime
 import email
+import json
 import os
 import re
+import time
 
 import joblib  # For saving/loading models
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import (accuracy_score, classification_report,
+                             confusion_matrix, f1_score,
+                             precision_recall_fscore_support)
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
+
+# Try to import visualization libraries
+try:
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    VISUALIZATION_AVAILABLE = True
+except ImportError:
+    VISUALIZATION_AVAILABLE = False
+    print("Warning: Matplotlib and/or Seaborn not available. Visualizations will be skipped.")
+    print("To enable visualizations, install the required packages:")
+    print("pip install matplotlib seaborn")
 
 # Constants
 DATA_DIR = "enron_data"
@@ -41,6 +56,7 @@ TRAIN_DATA_FILE = "train_data.csv"
 TEST_DATA_FILE = "test_data.csv"
 NUM_TOP_USERS = 150  # Number of unique users to include
 MODEL_DIR = "models"  # Directory to store models
+RESULTS_DIR = "results"  # Directory to store evaluation results
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_model.joblib")
 OPTIMIZED_MODEL_FILE = os.path.join(MODEL_DIR, "optimized_model.joblib")
 MODEL_METADATA_FILE = os.path.join(MODEL_DIR, "model_metadata.json")
@@ -218,7 +234,10 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
     
     # Train the model
     print("Training the Naive Bayes classifier...")
+    start_time = time.time()
     pipeline.fit(train_df['content'], train_df['sender'])
+    training_time = time.time() - start_time
+    print(f"Training completed in {training_time:.2f} seconds")
     
     # Evaluate the model
     y_pred = pipeline.predict(test_df['content'])
@@ -231,7 +250,9 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
     
     # Save the model if requested
     if save:
-        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, train_df)
+        # Add training time to metadata
+        metadata_extras = {'training_time': training_time}
+        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, train_df, metadata_extras)
     
     return pipeline
 
@@ -257,12 +278,15 @@ def optimize_hyperparameters(train_df, test_df, save=True):
     
     # Perform grid search
     print("Optimizing hyperparameters...")
+    start_time = time.time()
     grid_search = GridSearchCV(pipeline, param_grid, cv=3, n_jobs=-1, verbose=1)
     grid_search.fit(X_train, y_train)
+    training_time = time.time() - start_time
     
     # Print best parameters
     print(f"Best parameters: {grid_search.best_params_}")
     print(f"Best cross-validation score: {grid_search.best_score_:.4f}")
+    print(f"Optimization completed in {training_time:.2f} seconds")
     
     # Evaluate on test set
     best_model = grid_search.best_estimator_
@@ -272,7 +296,13 @@ def optimize_hyperparameters(train_df, test_df, save=True):
     
     # Save the model if requested
     if save:
-        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", accuracy, train_df)
+        # Add training time and best parameters to metadata
+        metadata_extras = {
+            'training_time': training_time,
+            'best_parameters': grid_search.best_params_,
+            'best_cv_score': grid_search.best_score_
+        }
+        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", accuracy, train_df, metadata_extras)
     
     return best_model
 
@@ -290,7 +320,412 @@ def predict_sender(model, email_content):
     
     return sender, confidence
 
-def save_model(model, filepath, model_type, accuracy, emails_df):
+def evaluate_model_comprehensive(model, test_df, model_name="Model"):
+    """Comprehensive evaluation of a model with detailed metrics."""
+    print(f"\n=== Comprehensive Evaluation: {model_name} ===")
+    
+    # Make predictions
+    y_true = test_df['sender']
+    y_pred = model.predict(test_df['content'])
+    y_proba = model.predict_proba(test_df['content'])
+    
+    # Basic metrics
+    accuracy = accuracy_score(y_true, y_pred)
+    precision, recall, f1_weighted, support = precision_recall_fscore_support(y_true, y_pred, average='weighted')
+    macro_f1 = f1_score(y_true, y_pred, average='macro')
+    
+    # Create results dictionary
+    results = {
+        'model_name': model_name,
+        'accuracy': accuracy,
+        'precision_weighted': precision,
+        'recall_weighted': recall,
+        'f1_weighted': f1_weighted,
+        'f1_macro': macro_f1,
+        'num_classes': len(np.unique(y_true)),
+        'num_samples': len(y_true),
+        'evaluation_time': time.time()
+    }
+    
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision (weighted): {precision:.4f}")
+    print(f"Recall (weighted): {recall:.4f}")
+    print(f"F1-score (weighted): {f1_weighted:.4f}")
+    print(f"F1-score (macro): {macro_f1:.4f}")
+    print(f"Number of classes: {len(np.unique(y_true))}")
+    
+    # Detailed classification report
+    class_report = classification_report(y_true, y_pred, output_dict=True)
+    results['classification_report'] = class_report
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    results['confusion_matrix'] = cm.tolist()  # Convert to list for JSON serialization
+    
+    # Top performing classes
+    class_f1_scores = []
+    for class_name, metrics in class_report.items():
+        if isinstance(metrics, dict) and 'f1-score' in metrics:
+            class_f1_scores.append((class_name, metrics['f1-score'], metrics['support']))
+    
+    class_f1_scores.sort(key=lambda x: x[1], reverse=True)
+    results['top_classes'] = class_f1_scores[:10]
+    results['worst_classes'] = class_f1_scores[-10:]
+    
+    print(f"\nTop 5 performing classes (by F1-score):")
+    for class_name, f1_val, support in class_f1_scores[:5]:
+        print(f"  {class_name}: F1={f1_val:.3f} (support={support})")
+    
+    print(f"\nWorst 5 performing classes (by F1-score):")
+    for class_name, f1_val, support in class_f1_scores[-5:]:
+        print(f"  {class_name}: F1={f1_val:.3f} (support={support})")
+    
+    return results, y_true, y_pred, y_proba
+
+def create_confusion_matrix_plot(y_true, y_pred, model_name, save_path=None, top_n=20):
+    """Create and save confusion matrix visualization."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping confusion matrix plot.")
+        return None
+        
+    # Get top N most frequent classes for readability
+    top_classes = pd.Series(y_true).value_counts().head(top_n).index.tolist()
+    
+    # Filter data to top classes
+    mask = pd.Series(y_true).isin(top_classes) & pd.Series(y_pred).isin(top_classes)
+    y_true_filtered = pd.Series(y_true)[mask]
+    y_pred_filtered = pd.Series(y_pred)[mask]
+    
+    # Create confusion matrix
+    cm = confusion_matrix(y_true_filtered, y_pred_filtered, labels=top_classes)
+    
+    # Create plot
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=top_classes, yticklabels=top_classes)
+    plt.title(f'Confusion Matrix - {model_name}\n(Top {top_n} Most Frequent Classes)')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Confusion matrix saved to {save_path}")
+    
+    return plt
+
+def create_performance_comparison_plot(baseline_results, optimized_results, save_path=None):
+    """Create a comparison plot of model performances."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping performance comparison plot.")
+        return None
+        
+    metrics = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted', 'f1_macro']
+    baseline_values = [baseline_results[metric] for metric in metrics]
+    optimized_values = [optimized_results[metric] for metric in metrics]
+    
+    x = np.arange(len(metrics))
+    width = 0.35
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars1 = ax.bar(x - width/2, baseline_values, width, label='Baseline Model', alpha=0.8)
+    bars2 = ax.bar(x + width/2, optimized_values, width, label='Optimized Model', alpha=0.8)
+    
+    ax.set_xlabel('Metrics')
+    ax.set_ylabel('Score')
+    ax.set_title('Model Performance Comparison')
+    ax.set_xticks(x)
+    ax.set_xticklabels([m.replace('_', ' ').title() for m in metrics])
+    ax.legend()
+    ax.set_ylim(0, 1)
+    
+    # Add value labels on bars
+    def add_value_labels(bars):
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.3f}',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 3),  # 3 points vertical offset
+                       textcoords="offset points",
+                       ha='center', va='bottom',
+                       fontsize=9)
+    
+    add_value_labels(bars1)
+    add_value_labels(bars2)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Performance comparison saved to {save_path}")
+    
+    return plt
+
+def create_class_performance_plot(results, save_path=None, top_n=15):
+    """Create a plot showing per-class F1 scores."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping class performance plot.")
+        return None
+        
+    class_report = results['classification_report']
+    
+    # Extract class performance data
+    classes = []
+    f1_scores = []
+    supports = []
+    
+    for class_name, metrics in class_report.items():
+        if isinstance(metrics, dict) and 'f1-score' in metrics:
+            classes.append(class_name)
+            f1_scores.append(metrics['f1-score'])
+            supports.append(metrics['support'])
+    
+    # Sort by F1 score and take top N
+    class_data = list(zip(classes, f1_scores, supports))
+    class_data.sort(key=lambda x: x[1], reverse=True)
+    
+    top_classes = class_data[:top_n]
+    worst_classes = class_data[-top_n:]
+    
+    # Create subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Top performing classes
+    top_names, top_f1s, top_supports = zip(*top_classes)
+    bars1 = ax1.barh(range(len(top_names)), top_f1s, alpha=0.8, color='green')
+    ax1.set_yticks(range(len(top_names)))
+    ax1.set_yticklabels(top_names)
+    ax1.set_xlabel('F1 Score')
+    ax1.set_title(f'Top {top_n} Performing Classes')
+    ax1.set_xlim(0, 1)
+    
+    # Add support information
+    for i, (f1, support) in enumerate(zip(top_f1s, top_supports)):
+        ax1.text(f1 + 0.01, i, f'(n={support})', va='center', fontsize=8)
+    
+    # Worst performing classes
+    worst_names, worst_f1s, worst_supports = zip(*worst_classes)
+    bars2 = ax2.barh(range(len(worst_names)), worst_f1s, alpha=0.8, color='red')
+    ax2.set_yticks(range(len(worst_names)))
+    ax2.set_yticklabels(worst_names)
+    ax2.set_xlabel('F1 Score')
+    ax2.set_title(f'Worst {top_n} Performing Classes')
+    ax2.set_xlim(0, 1)
+    
+    # Add support information
+    for i, (f1, support) in enumerate(zip(worst_f1s, worst_supports)):
+        ax2.text(f1 + 0.01, i, f'(n={support})', va='center', fontsize=8)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Class performance plot saved to {save_path}")
+    
+    return plt
+
+def export_results_to_files(baseline_results, optimized_results, train_df, test_df):
+    """Export all results to various file formats."""
+    # Create results directory
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 1. Export detailed metrics to JSON
+    combined_results = {
+        'evaluation_timestamp': timestamp,
+        'dataset_info': {
+            'train_samples': len(train_df),
+            'test_samples': len(test_df),
+            'num_classes': len(train_df['sender'].unique()),
+            'top_senders': train_df['sender'].value_counts().head(10).to_dict()
+        },
+        'baseline_model': baseline_results,
+        'optimized_model': optimized_results
+    }
+    
+    json_path = os.path.join(RESULTS_DIR, f"evaluation_results_{timestamp}.json")
+    with open(json_path, 'w') as f:
+        json.dump(combined_results, f, indent=2, default=str)
+    print(f"Detailed results saved to {json_path}")
+    
+    # 2. Export summary metrics to CSV
+    summary_data = []
+    for model_name, results in [('Baseline', baseline_results), ('Optimized', optimized_results)]:
+        summary_data.append({
+            'Model': model_name,
+            'Accuracy': results['accuracy'],
+            'Precision (Weighted)': results['precision_weighted'],
+            'Recall (Weighted)': results['recall_weighted'],
+            'F1-Score (Weighted)': results['f1_weighted'],
+            'F1-Score (Macro)': results['f1_macro'],
+            'Number of Classes': results['num_classes'],
+            'Test Samples': results['num_samples']
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    csv_path = os.path.join(RESULTS_DIR, f"model_comparison_{timestamp}.csv")
+    summary_df.to_csv(csv_path, index=False)
+    print(f"Model comparison saved to {csv_path}")
+    
+    # 3. Export detailed classification reports
+    for model_name, results in [('baseline', baseline_results), ('optimized', optimized_results)]:
+        class_report_df = pd.DataFrame(results['classification_report']).T
+        class_report_path = os.path.join(RESULTS_DIR, f"{model_name}_classification_report_{timestamp}.csv")
+        class_report_df.to_csv(class_report_path)
+        print(f"{model_name.title()} classification report saved to {class_report_path}")
+    
+    return json_path, csv_path
+
+def generate_comprehensive_report():
+    """Generate a comprehensive evaluation report with visualizations."""
+    print("\n" + "="*60)
+    print("GENERATING COMPREHENSIVE EVALUATION REPORT")
+    print("="*60)
+    
+    # Check if we have trained models
+    if not (os.path.exists(BASELINE_MODEL_FILE) and os.path.exists(OPTIMIZED_MODEL_FILE)):
+        print("Error: No trained models found. Please train models first.")
+        return None
+    
+    # Check if we have train/test splits
+    if not (os.path.exists(TRAIN_DATA_FILE) and os.path.exists(TEST_DATA_FILE)):
+        print("Error: No train/test split found. Please process data first.")
+        return None
+    
+    # Load models and data
+    print("Loading models and data...")
+    baseline_model = load_model(BASELINE_MODEL_FILE)
+    optimized_model = load_model(OPTIMIZED_MODEL_FILE)
+    train_df = pd.read_csv(TRAIN_DATA_FILE)
+    test_df = pd.read_csv(TEST_DATA_FILE)
+    
+    # Evaluate models
+    baseline_results, y_true_base, y_pred_base, y_proba_base = evaluate_model_comprehensive(
+        baseline_model, test_df, "Baseline Model")
+    
+    optimized_results, y_true_opt, y_pred_opt, y_proba_opt = evaluate_model_comprehensive(
+        optimized_model, test_df, "Optimized Model")
+    
+    # Create visualizations
+    print("\nCreating visualizations...")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    plots_generated = []
+    
+    if VISUALIZATION_AVAILABLE:
+        # 1. Confusion matrices
+        cm_baseline_path = os.path.join(RESULTS_DIR, f"confusion_matrix_baseline_{timestamp}.png")
+        plt1 = create_confusion_matrix_plot(y_true_base, y_pred_base, "Baseline Model", cm_baseline_path)
+        if plt1: 
+            plt1.close()
+            plots_generated.append(cm_baseline_path)
+        
+        cm_optimized_path = os.path.join(RESULTS_DIR, f"confusion_matrix_optimized_{timestamp}.png")
+        plt2 = create_confusion_matrix_plot(y_true_opt, y_pred_opt, "Optimized Model", cm_optimized_path)
+        if plt2:
+            plt2.close()
+            plots_generated.append(cm_optimized_path)
+        
+        # 2. Performance comparison
+        comparison_path = os.path.join(RESULTS_DIR, f"performance_comparison_{timestamp}.png")
+        plt3 = create_performance_comparison_plot(baseline_results, optimized_results, comparison_path)
+        if plt3:
+            plt3.close()
+            plots_generated.append(comparison_path)
+        
+        # 3. Class performance plots
+        class_perf_baseline_path = os.path.join(RESULTS_DIR, f"class_performance_baseline_{timestamp}.png")
+        plt4 = create_class_performance_plot(baseline_results, class_perf_baseline_path)
+        if plt4:
+            plt4.close()
+            plots_generated.append(class_perf_baseline_path)
+        
+        class_perf_optimized_path = os.path.join(RESULTS_DIR, f"class_performance_optimized_{timestamp}.png")
+        plt5 = create_class_performance_plot(optimized_results, class_perf_optimized_path)
+        if plt5:
+            plt5.close()
+            plots_generated.append(class_perf_optimized_path)
+    else:
+        print("Visualization libraries not available. Skipping plot generation.")
+        print("To enable visualizations, install: pip install matplotlib seaborn")
+    
+    # Export results to files
+    print("\nExporting results to files...")
+    json_path, csv_path = export_results_to_files(baseline_results, optimized_results, train_df, test_df)
+    
+    # Generate summary report
+    print("\n" + "="*60)
+    print("EVALUATION SUMMARY REPORT")
+    print("="*60)
+    print(f"Evaluation completed at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Dataset: {len(train_df)} training samples, {len(test_df)} testing samples")
+    print(f"Number of classes (senders): {len(train_df['sender'].unique())}")
+    
+    print(f"\nBASELINE MODEL PERFORMANCE:")
+    print(f"  Accuracy: {baseline_results['accuracy']:.4f}")
+    print(f"  Precision (weighted): {baseline_results['precision_weighted']:.4f}")
+    print(f"  Recall (weighted): {baseline_results['recall_weighted']:.4f}")
+    print(f"  F1-score (weighted): {baseline_results['f1_weighted']:.4f}")
+    print(f"  F1-score (macro): {baseline_results['f1_macro']:.4f}")
+    
+    print(f"\nOPTIMIZED MODEL PERFORMANCE:")
+    print(f"  Accuracy: {optimized_results['accuracy']:.4f}")
+    print(f"  Precision (weighted): {optimized_results['precision_weighted']:.4f}")
+    print(f"  Recall (weighted): {optimized_results['recall_weighted']:.4f}")
+    print(f"  F1-score (weighted): {optimized_results['f1_weighted']:.4f}")
+    print(f"  F1-score (macro): {optimized_results['f1_macro']:.4f}")
+    
+    # Improvement analysis
+    accuracy_improvement = optimized_results['accuracy'] - baseline_results['accuracy']
+    f1_improvement = optimized_results['f1_weighted'] - baseline_results['f1_weighted']
+    
+    print(f"\nIMPROVEMENT ANALYSIS:")
+    print(f"  Accuracy improvement: {accuracy_improvement:+.4f} ({accuracy_improvement/baseline_results['accuracy']*100:+.2f}%)")
+    print(f"  F1-score improvement: {f1_improvement:+.4f} ({f1_improvement/baseline_results['f1_weighted']*100:+.2f}%)")
+    
+    print(f"\nFILES GENERATED:")
+    print(f"  Detailed results (JSON): {json_path}")
+    print(f"  Model comparison (CSV): {csv_path}")
+    
+    if plots_generated:
+        for plot_path in plots_generated:
+            plot_name = os.path.basename(plot_path).replace(f"_{timestamp}.png", "").replace("_", " ").title()
+            print(f"  {plot_name}: {plot_path}")
+    else:
+        print("  No plots generated (visualization libraries not available)")
+    
+    print(f"\nAll results saved in: {RESULTS_DIR}/")
+    print("="*60)
+    
+    return {
+        'baseline_results': baseline_results,
+        'optimized_results': optimized_results,
+        'files_generated': {
+            'json': json_path,
+            'csv': csv_path,
+            'plots': plots_generated
+        }
+    }
+
+def predict_sender(model, email_content):
+    """Predict the sender of a given email."""
+    # Clean the email content
+    cleaned_content = re.sub(r'\s+', ' ', email_content)
+    cleaned_content = re.sub(r'[^\w\s]', '', cleaned_content)
+    cleaned_content = cleaned_content.lower()
+    
+    # Make prediction
+    sender = model.predict([cleaned_content])[0]
+    probabilities = model.predict_proba([cleaned_content])[0]
+    confidence = max(probabilities)
+    
+    return sender, confidence
+
+def save_model(model, filepath, model_type, accuracy, emails_df, metadata_extras=None):
     """Save a trained model to disk."""
     # Create directory if it doesn't exist
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -308,6 +743,10 @@ def save_model(model, filepath, model_type, accuracy, emails_df):
         "date_trained": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "top_users": emails_df['sender'].value_counts().head(10).to_dict()
     }
+    
+    # Add extra metadata if provided
+    if metadata_extras:
+        metadata.update(metadata_extras)
     
     # If first model being saved, create new metadata file
     if os.path.exists(MODEL_METADATA_FILE):
@@ -434,11 +873,34 @@ def main():
         # Ask if user wants to use saved models
         print("\nFound previously trained models.")
         if has_saved_splits:
-            choice = input("Would you like to (1) use saved models, (2) retrain models with existing split, or (3) recreate split and retrain? Enter 1, 2, or 3: ")
+            choice = input("Would you like to (1) use saved models, (2) retrain models with existing split, (3) recreate split and retrain, or (4) generate evaluation report? Enter 1, 2, 3, or 4: ")
         else:
-            choice = input("Would you like to (1) use saved models or (2) retrain models? Enter 1 or 2: ")
+            choice = input("Would you like to (1) use saved models, (2) retrain models, or (3) generate evaluation report? Enter 1, 2, or 3: ")
         
-        if choice == '1':
+        if choice == '4' or (choice == '3' and not has_saved_splits):
+            # Generate comprehensive evaluation report
+            report_results = generate_comprehensive_report()
+            if report_results:
+                print("\nEvaluation report generated successfully!")
+                response = input("Would you like to continue with interactive testing? (y/n): ")
+                if response.lower() != 'y':
+                    return
+                
+                # Load data and models for interactive testing
+                emails_df = process_emails(maildir_path)
+                optimized_model = load_model(OPTIMIZED_MODEL_FILE)
+            else:
+                return
+        elif choice == '1':
+            # Load emails dataset for sample prediction
+            emails_df = process_emails(maildir_path)
+            
+            # Load saved models
+            print("\n=== Loading Saved Models ===")
+            baseline_model = load_model(BASELINE_MODEL_FILE)
+            optimized_model = load_model(OPTIMIZED_MODEL_FILE)
+            
+        elif choice == '1':
             # Load emails dataset for sample prediction
             emails_df = process_emails(maildir_path)
             
