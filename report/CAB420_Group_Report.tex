@@ -102,9 +102,9 @@
 
 Email sender identification represents a critical challenge in digital forensics, cybersecurity, and information retrieval systems. This project investigates the effectiveness of various machine learning approaches for classifying email senders using the renowned Enron email dataset, which contains approximately 500,000 emails from 150 users.
 
-We implemented and evaluated six diverse machine learning algorithms: Multinomial Naive Bayes (baseline and optimised variants), Support Vector Machines (SVM), Random Forest, Logistic Regression, and Multi-layer Perceptron Neural Networks. Our experimental framework utilised 76,458 training samples and 19,115 test samples across 144 unique sender classes, employing TF-IDF vectorisation for feature extraction.
+We implemented and evaluated six diverse machine learning algorithms: Multinomial Naive Bayes (baseline and optimised variants), Long Short-Term Memory (LSTM) neural networks, Random Forest, Logistic Regression, and Multi-layer Perceptron Neural Networks. Our experimental framework utilised 76,458 training samples and 19,115 test samples across 144 unique sender classes, employing both TF-IDF vectorisation and deep learning text processing approaches.
 
-The Random Forest classifier achieved the highest performance with 79.97\% accuracy and 0.7954 weighted F1-score, demonstrating superior capability in handling the high-dimensional, sparse text features characteristic of email data. Support Vector Machines and Logistic Regression also performed competitively, achieving accuracies of 76.54\% and 77.55\% respectively. The baseline Naive Bayes classifier, while computationally efficient, achieved the lowest performance at 57.38\% accuracy.
+The Random Forest classifier achieved the highest performance with 79.97\% accuracy and 0.7954 weighted F1-score, demonstrating superior capability in handling the high-dimensional, sparse text features characteristic of email data. Logistic Regression and Multi-layer Perceptron Neural Networks also performed competitively, achieving accuracies of 77.55\% and 76.14\% respectively. The LSTM network achieved 65.02\% accuracy, showing moderate performance for sequential text modeling, while the baseline Naive Bayes classifier achieved 57.38\% accuracy.
 
 Our analysis reveals several key findings: (1) ensemble methods like Random Forest excel in email authorship attribution due to their ability to capture complex feature interactions, (2) proper hyperparameter optimisation significantly improves model performance, as evidenced by the 9.83\% accuracy improvement from baseline to optimised Naive Bayes, and (3) the inherent class imbalance in the dataset poses challenges for all methods, with macro F1-scores consistently lower than weighted scores.
 
@@ -348,8 +348,9 @@ We selected algorithms representing diverse paradigms in machine learning:
 
 \begin{itemize}
     \item \textbf{Probabilistic Models}: Naive Bayes (baseline and optimised)
-    \item \textbf{Linear Models}: Support Vector Machines and Logistic Regression
+    \item \textbf{Deep Learning}: Long Short-Term Memory (LSTM) networks
     \item \textbf{Ensemble Methods}: Random Forest
+    \item \textbf{Linear Models}: Logistic Regression
     \item \textbf{Neural Networks}: Multi-layer Perceptron
 \end{itemize}
 
@@ -402,36 +403,75 @@ where $C_k$ represents class $k$, $x_i$ represents feature $i$, and $P(C_k)$ and
     \item May underperform with complex feature interactions
 \end{itemize}
 
-\subsection{Support Vector Machines}
+\subsection{Long Short-Term Memory (LSTM) Networks}
 
 \subsubsection{Theoretical Foundation}
 
-Support Vector Machines find the optimal hyperplane that maximises the margin between classes. For non-linearly separable data, SVMs use kernel functions to map data into higher-dimensional spaces where linear separation becomes possible.
+Long Short-Term Memory networks are a specialized type of recurrent neural network capable of learning long-term dependencies in sequential data. LSTMs address the vanishing gradient problem of traditional RNNs through a gating mechanism that controls information flow.
 
-The optimisation objective is:
+The LSTM cell state is updated through three gates:
 
 \begin{equation}
-\min_{w,b,\xi} \frac{1}{2}||w||^2 + C\sum_{i=1}^{n}\xi_i
+f_t = \sigma(W_f \cdot [h_{t-1}, x_t] + b_f)
 \end{equation}
 
-subject to constraints that ensure proper classification with soft margins.
+\begin{equation}
+i_t = \sigma(W_i \cdot [h_{t-1}, x_t] + b_i)
+\end{equation}
+
+\begin{equation}
+o_t = \sigma(W_o \cdot [h_{t-1}, x_t] + b_o)
+\end{equation}
+
+where $f_t$, $i_t$, and $o_t$ represent the forget, input, and output gates respectively.
 
 \subsubsection{Implementation Details}
 
-\textbf{Configuration}:
+\textbf{Architecture Configuration}:
 \begin{itemize}
-    \item Kernel: Radial Basis Function (RBF)
-    \item Regularization parameter: $C = 1.0$
-    \item Probability estimates enabled
-    \item Cache size: 1000 MB for improved performance
+    \item Embedding layer: 100-dimensional word embeddings
+    \item LSTM layer: 64 units with dropout (0.2)
+    \item Dense output layer: 144 neurons (softmax activation)
+    \item Vocabulary size: 5,000 most frequent words
+    \item Sequence length: 100 tokens (padded/truncated)
 \end{itemize}
 
-\textbf{Multi-class Strategy}:
-SVMs are inherently binary classifiers. For our 144-class problem, we employed the one-vs-rest strategy, training 144 binary classifiers and selecting the class with the highest decision function value.
+\textbf{Training Configuration}:
+\begin{itemize}
+    \item Optimizer: Adam with default learning rate
+    \item Loss function: Categorical crossentropy
+    \item Batch size: 32
+    \item Early stopping: Patience of 3 epochs
+    \item Validation split: 20\% of training data
+\end{itemize}
 
-\subsubsection{Computational Considerations}
+\subsubsection{Text Processing Pipeline}
 
-SVMs exhibit quadratic to cubic time complexity in the number of training samples, making them computationally demanding for large datasets. Our implementation utilised scikit-learn's optimised LibSVM backend with efficient memory management.
+The LSTM implementation includes comprehensive text preprocessing:
+\begin{itemize}
+    \item Tokenization using Keras Tokenizer
+    \item Sequence padding to uniform length
+    \item Label encoding for multi-class classification
+    \item Word embedding initialization
+\end{itemize}
+
+\subsubsection{Advantages and Limitations}
+
+\textbf{Advantages}:
+\begin{itemize}
+    \item Captures sequential patterns in text
+    \item Learns semantic representations automatically
+    \item Handles variable-length input sequences
+    \item No explicit feature engineering required
+\end{itemize}
+
+\textbf{Limitations}:
+\begin{itemize}
+    \item Computationally intensive training
+    \item Requires large amounts of training data
+    \item Less interpretable than traditional models
+    \item Sensitive to hyperparameter choices
+\end{itemize}
 
 \subsection{Random Forest}
 
@@ -599,9 +639,9 @@ Our comprehensive evaluation reveals significant performance differences among t
         \midrule
         Random Forest & \textbf{0.7997} & \textbf{0.7954} & \textbf{0.6437} & \textbf{0.8095} & \textbf{0.7997} \\
         Logistic Regression & 0.7755 & 0.7694 & 0.5555 & 0.7922 & 0.7755 \\
-        SVM & 0.7654 & 0.7603 & 0.5866 & 0.7680 & 0.7654 \\
         Neural Network & 0.7614 & 0.7560 & 0.5421 & 0.7591 & 0.7614 \\
         Optimised Naive Bayes & 0.6721 & 0.6627 & 0.4973 & 0.7028 & 0.6721 \\
+        LSTM & 0.6502 & 0.6341 & 0.3331 & 0.6605 & 0.6502 \\
         Naive Bayes (Baseline) & 0.5738 & 0.5324 & 0.2551 & 0.6315 & 0.5738 \\
         \bottomrule
     \end{tabular}
@@ -611,8 +651,8 @@ Figure~\ref{fig:model_comparison} provides a comprehensive visual comparison of 
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/01_multi_model_comparison_20250525_143526.png}
-    \caption{Comprehensive comparison of all machine learning models across key performance metrics. Random Forest consistently outperforms other approaches across accuracy, precision, recall, and F1-scores, whilst linear models (Logistic Regression and SVM) demonstrate competitive performance relative to their computational efficiency.}
+    \includegraphics[width=\textwidth]{../results/01_multi_model_comparison_20250526_090442.png}
+    \caption{Comprehensive comparison of all machine learning models across key performance metrics. Random Forest consistently outperforms other approaches across accuracy, precision, recall, and F1-scores, whilst linear models (Logistic Regression) and deep learning approaches (LSTM) demonstrate varying performance characteristics relative to their computational complexity.}
     \label{fig:model_comparison}
 \end{figure}
 
@@ -632,16 +672,18 @@ Random Forest achieved the highest performance across all metrics, with 79.97\% 
     \item \textbf{Class Imbalance Tolerance}: The ensemble approach provides better generalisation across classes with varying sample sizes.
 \end{itemize}
 
-\subsubsection{Strong Performance of Linear Models}
+\subsubsection{Linear Model Effectiveness and Deep Learning Comparison}
 
-Both Logistic Regression (77.55\% accuracy) and SVM (76.54\% accuracy) demonstrated competitive performance, highlighting the effectiveness of linear approaches for high-dimensional text data:
+Logistic Regression achieved 77.55\% accuracy, demonstrating the continued effectiveness of linear approaches for high-dimensional text data, whilst the LSTM network achieved 65.02\% accuracy, showing the challenges deep learning faces with limited training data:
 
 \begin{itemize}
-    \item \textbf{High-Dimensional Effectiveness}: Text data typically becomes linearly separable in high-dimensional TF-IDF space, making linear models particularly suitable.
+    \item \textbf{High-Dimensional Effectiveness}: Text data typically becomes linearly separable in high-dimensional TF-IDF space, making linear models particularly suitable for this task.
     
-    \item \textbf{Computational Efficiency}: These models offer excellent trade-offs between performance and computational requirements.
+    \item \textbf{Computational Efficiency}: Logistic Regression offers excellent trade-offs between performance and computational requirements compared to more complex architectures.
     
-    \item \textbf{Interpretability}: Linear models provide clear insights into which features (words/terms) contribute most to classification decisions.
+    \item \textbf{Deep Learning Limitations}: The LSTM's lower performance likely reflects the dataset size limitations and the model's need for more extensive training data to effectively capture sequential patterns in text.
+    
+    \item \textbf{Interpretability}: Linear models provide clear insights into which features (words/terms) contribute most to classification decisions, whilst LSTM models remain more opaque.
 \end{itemize}
 
 \subsubsection{Neural Network Performance}
@@ -674,7 +716,7 @@ To complement the quantitative results, we present several visualisations that p
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/04_radar_chart_comparison_20250525_143526.png}
+    \includegraphics[width=\textwidth]{../results/04_radar_chart_comparison_20250526_090442.png}
     \caption{Radar chart comparison showing the performance profile of each algorithm across all evaluation metrics. The chart clearly visualises Random Forest's superior performance envelope, whilst also highlighting the balanced performance characteristics of linear models and the varying strengths of different approaches.}
     \label{fig:radar_comparison}
 \end{figure}
@@ -683,7 +725,7 @@ The radar chart in Figure~\ref{fig:radar_comparison} provides an intuitive visua
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/05_performance_distribution_20250525_143526.png}
+    \includegraphics[width=\textwidth]{../results/05_performance_distribution_20250526_090442.png}
     \caption{Performance distribution analysis showing the spread of scores across different metrics and models. This visualisation highlights the consistency of ensemble methods and reveals the variance in performance characteristics across different algorithmic approaches.}
     \label{fig:performance_distribution}
 \end{figure}
@@ -709,9 +751,9 @@ The consistent pattern of weighted F1-scores exceeding macro F1-scores across al
         \midrule
         Random Forest & 0.7954 & 0.6437 \\
         Logistic Regression & 0.7694 & 0.5555 \\
-        SVM & 0.7603 & 0.5866 \\
         Neural Network & 0.7560 & 0.5421 \\
         Optimised Naive Bayes & 0.6627 & 0.4973 \\
+        LSTM & 0.6341 & 0.3331 \\
         Naive Bayes (Baseline) & 0.5324 & 0.2551 \\
         \bottomrule
     \end{tabular}
@@ -727,8 +769,8 @@ The computational requirements vary significantly across algorithms:
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/03_training_time_comparison_20250525_143526.png}
-    \caption{Training time comparison across all implemented algorithms. The visualisation demonstrates the substantial computational trade-offs between different approaches, with Naive Bayes requiring minimal training time whilst SVM and ensemble methods demand significantly more computational resources.}
+    \includegraphics[width=\textwidth]{../results/03_training_time_comparison_20250526_090442.png}
+    \caption{Training time comparison across all implemented algorithms. The visualisation demonstrates the substantial computational trade-offs between different approaches, with Naive Bayes requiring minimal training time whilst LSTM and ensemble methods demand significantly more computational resources.}
     \label{fig:training_time}
 \end{figure}
 
@@ -739,7 +781,7 @@ As illustrated in Figure~\ref{fig:training_time}, the computational efficiency h
     \item \textbf{Logistic Regression}: ~5 seconds (very efficient)
     \item \textbf{Neural Network}: ~45 seconds (moderate complexity)
     \item \textbf{Random Forest}: ~60 seconds (high due to ensemble)
-    \item \textbf{SVM}: ~180 seconds (most computationally intensive)
+    \item \textbf{LSTM}: ~120 seconds (high due to sequential processing)
 \end{itemize}
 
 \subsubsection{Performance-Efficiency Trade-offs}
@@ -753,7 +795,7 @@ Memory usage patterns reflect algorithmic complexity:
 \begin{itemize}
     \item \textbf{Linear Models}: Minimal memory overhead beyond feature storage
     \item \textbf{Random Forest}: Significant memory for storing 100 decision trees
-    \item \textbf{SVM}: Moderate memory for support vector storage
+    \item \textbf{LSTM}: High memory for sequential state maintenance and embeddings
     \item \textbf{Neural Network}: Moderate memory for weight matrices
 \end{itemize}
 
@@ -777,7 +819,7 @@ Analysis of confusion matrices reveals several patterns:
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/02_confusion_matrix_comparison_20250525_143526.png}
+    \includegraphics[width=\textwidth]{../results/02_confusion_matrix_comparison_20250526_090442.png}
     \caption{Confusion matrix comparison across selected high-performing models. The visualisation demonstrates the classification patterns and error distributions, highlighting areas where models struggle with similar writing styles or insufficient training data for certain senders.}
     \label{fig:confusion_matrices}
 \end{figure}
@@ -798,7 +840,7 @@ The comprehensive metrics analysis dashboard provides deeper insights into perfo
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{../results/06_metrics_analysis_dashboard_20250525_143526.png}
+    \includegraphics[width=\textwidth]{../results/06_metrics_analysis_dashboard_20250526_090442.png}
     \caption{Comprehensive metrics analysis dashboard showing performance correlations and distributions across all evaluation measures. The correlation matrix reveals the relationships between different performance metrics, whilst the scatter analysis identifies performance clusters among different algorithmic approaches.}
     \label{fig:metrics_dashboard}
 \end{figure}
@@ -825,7 +867,7 @@ For practical deployment, several factors must be considered:
 \begin{itemize}
     \item \textbf{Performance vs. Efficiency Trade-off}: Random Forest offers the best accuracy but requires more computational resources than linear models.
     
-    \item \textbf{Scalability}: Logistic Regression and SVM scale better to larger datasets than ensemble methods.
+    \item \textbf{Scalability}: Logistic Regression scales better to larger datasets than ensemble methods or deep learning approaches.
     
     \item \textbf{Interpretability}: Linear models provide clearer explanations for classification decisions, which may be important in forensic applications.
     
@@ -843,7 +885,7 @@ Based on our comprehensive evaluation, we provide the following recommendations:
     
     \item \textbf{Real-time Systems}: Optimised Naive Bayes offers acceptable accuracy with minimal computational overhead for time-critical applications.
     
-    \item \textbf{Forensic Applications}: SVM or Logistic Regression provide good performance with clear decision boundaries for legal or investigative contexts.
+    \item \textbf{Forensic Applications}: Logistic Regression provides good performance with clear decision boundaries for legal or investigative contexts, whilst LSTM may offer additional insights in sequential pattern analysis.
 \end{itemize}
 
 \section{Conclusions and Future Work}
@@ -869,7 +911,7 @@ Our investigation yielded several important findings:
 \begin{itemize}
     \item \textbf{Ensemble Method Superiority}: Random Forest achieved the highest performance (79.97\% accuracy), demonstrating the value of ensemble approaches for handling complex feature interactions in text data.
     
-    \item \textbf{Linear Model Competitiveness}: Logistic Regression and SVM provided strong performance with significantly lower computational overhead, making them excellent choices for practical applications.
+    \item \textbf{Linear Model Effectiveness}: Logistic Regression provided strong performance with significantly lower computational overhead, making it an excellent choice for practical applications, whilst LSTM showed the challenges of applying deep learning to limited text datasets.
     
     \item \textbf{Optimisation Importance}: The substantial improvement from baseline to optimised Naive Bayes (9.83\% accuracy gain) emphasises the critical role of hyperparameter tuning.
     
@@ -1078,7 +1120,7 @@ This appendix details the individual contributions of each group member to the p
 \subsubsection{Algorithm Implementation}
 \begin{itemize}
     \item \textbf{Naive Bayes}: Student Name 1
-    \item \textbf{SVM and Random Forest}: Student Name 2
+    \item \textbf{LSTM and Random Forest}: Student Name 2
     \item \textbf{Logistic Regression and Neural Networks}: Student Name 3
     \item \textbf{Evaluation Framework}: Student Name 4
 \end{itemize}

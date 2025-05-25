@@ -40,7 +40,21 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.svm import SVC
+
+# Try to import TensorFlow/Keras for LSTM
+try:
+    import tensorflow as tf
+    from sklearn.preprocessing import LabelEncoder
+    from tensorflow.keras.layers import LSTM, Dense, Dropout, Embedding
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.preprocessing.sequence import pad_sequences
+    from tensorflow.keras.preprocessing.text import Tokenizer
+    from tensorflow.keras.utils import to_categorical
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+    print("Warning: TensorFlow not available. LSTM classifier will be skipped.")
+    print("To enable LSTM, install TensorFlow: pip install tensorflow")
 
 # Try to import visualization libraries
 try:
@@ -73,7 +87,7 @@ MODEL_DIR = "models"  # Directory to store models
 RESULTS_DIR = "results"  # Directory to store evaluation results
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_model.joblib")
 OPTIMIZED_MODEL_FILE = os.path.join(MODEL_DIR, "optimized_model.joblib")
-SVM_MODEL_FILE = os.path.join(MODEL_DIR, "svm_model.joblib")
+LSTM_MODEL_FILE = os.path.join(MODEL_DIR, "lstm_model.h5")
 RANDOM_FOREST_MODEL_FILE = os.path.join(MODEL_DIR, "random_forest_model.joblib")
 LOGISTIC_REGRESSION_MODEL_FILE = os.path.join(MODEL_DIR, "logistic_regression_model.joblib")
 NEURAL_NETWORK_MODEL_FILE = os.path.join(MODEL_DIR, "neural_network_model.joblib")
@@ -281,48 +295,98 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
     
     return pipeline
 
-def build_svm_classifier(train_df, test_df, save=True):
-    """Build and evaluate a Support Vector Machine classifier."""
+def build_lstm_classifier(train_df, test_df, save=True):
+    """Build and evaluate an LSTM classifier."""
+    if not TENSORFLOW_AVAILABLE:
+        print("Error: TensorFlow not available. Please install TensorFlow to use LSTM classifier.")
+        print("Install with: pip install tensorflow")
+        return None
+    
     # Display dataset information
-    print("=== SVM Classifier Training Setup ===")
+    print("=== LSTM Classifier Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
     print(f"Testing samples: {len(test_df):,}")
     print(f"Number of unique senders: {len(train_df['sender'].unique())}")
     print(f"Average email length: {train_df['content'].str.len().mean():.0f} characters")
     
-    # Create a pipeline with TF-IDF and SVM
-    pipeline = Pipeline([
-        ('tfidf', TfidfVectorizer(
-            max_features=5000,
-            min_df=2,
-            max_df=0.8,
-            stop_words='english'
-        )),
-        ('classifier', SVC(
-            probability=True, 
-            random_state=42,
-            verbose=True,  # Enable verbose output
-            cache_size=1000  # Increase cache size for better performance
-        ))
+    # Prepare data
+    print("\n=== Preparing Data for LSTM ===")
+    X_train = train_df['content'].values
+    X_test = test_df['content'].values
+    y_train = train_df['sender'].values
+    y_test = test_df['sender'].values
+    
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y_train_encoded = label_encoder.fit_transform(y_train)
+    y_test_encoded = label_encoder.transform(y_test)
+    y_train_categorical = to_categorical(y_train_encoded)
+    y_test_categorical = to_categorical(y_test_encoded)
+    
+    # Tokenize text
+    max_features = 10000  # Maximum number of words to keep
+    max_length = 100      # Maximum sequence length
+    
+    tokenizer = Tokenizer(num_words=max_features, oov_token="<OOV>")
+    tokenizer.fit_on_texts(X_train)
+    
+    X_train_seq = tokenizer.texts_to_sequences(X_train)
+    X_test_seq = tokenizer.texts_to_sequences(X_test)
+    
+    X_train_padded = pad_sequences(X_train_seq, maxlen=max_length, padding='post', truncating='post')
+    X_test_padded = pad_sequences(X_test_seq, maxlen=max_length, padding='post', truncating='post')
+    
+    print(f"Vocabulary size: {len(tokenizer.word_index)}")
+    print(f"Number of classes: {len(label_encoder.classes_)}")
+    print(f"Sequence length: {max_length}")
+    
+    # Build LSTM model
+    print("\n=== Building LSTM Model ===")
+    model = Sequential([
+        Embedding(input_dim=max_features, output_dim=128, input_length=max_length),
+        LSTM(64, dropout=0.2, recurrent_dropout=0.2),
+        Dense(32, activation='relu'),
+        Dropout(0.5),
+        Dense(len(label_encoder.classes_), activation='softmax')
     ])
     
-    # Train the model with simple progress feedback
-    print("\n=== Starting SVM Training ===")
-    print("🚀 Training SVM classifier (this may take several minutes for large datasets)...")
-    print("📊 Verbose output from SVM training will be displayed below:")
+    model.compile(
+        optimizer='adam',
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    print("Model architecture:")
+    model.summary()
+    
+    # Train the model
+    print("\n=== Starting LSTM Training ===")
+    print("🚀 Training LSTM classifier...")
     print("-" * 50)
     
     start_time = time.time()
     
-    # Perform the training with simple progress messages
-    print("⏳ Training started...")
-    pipeline.fit(train_df['content'], train_df['sender'])
+    # Early stopping callback
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=3,
+        restore_best_weights=True
+    )
+    
+    # Train with validation split
+    history = model.fit(
+        X_train_padded, y_train_categorical,
+        batch_size=32,
+        epochs=10,
+        validation_split=0.2,
+        callbacks=[early_stopping],
+        verbose=1
+    )
     
     training_time = time.time() - start_time
     
-    # Clear progress line and show completion
     print(f"\n{'='*50}")
-    print(f"✓ SVM Training completed successfully!")
+    print(f"✓ LSTM Training completed successfully!")
     print(f"⏱️  Total training time: {training_time:.2f} seconds ({training_time/60:.1f} minutes)")
     
     # Show memory usage if psutil is available
@@ -332,65 +396,145 @@ def build_svm_classifier(train_df, test_df, save=True):
         memory_mb = process.memory_info().rss / 1024 / 1024
         print(f"💾 Memory usage: {memory_mb:.1f} MB")
     except ImportError:
-        # psutil not available, skip memory reporting
         pass
     print(f"{'='*50}")
     
     # Evaluate the model
-    print("\n=== SVM Model Evaluation ===")
-    y_pred = pipeline.predict(test_df['content'])
-    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print("\n=== LSTM Model Evaluation ===")
+    y_pred_proba = model.predict(X_test_padded)
+    y_pred_encoded = np.argmax(y_pred_proba, axis=1)
+    y_pred = label_encoder.inverse_transform(y_pred_encoded)
+    
+    accuracy = accuracy_score(y_test, y_pred)
     print(f"✅ Accuracy: {accuracy:.4f}")
     
     # Print detailed classification report
     print("\nClassification Report:")
-    print(classification_report(test_df['sender'], y_pred))
+    print(classification_report(y_test, y_pred))
+    
+    # Create a wrapper class to mimic sklearn interface
+    class LSTMWrapper:
+        def __init__(self, model, tokenizer, label_encoder, max_length):
+            self.model = model
+            self.tokenizer = tokenizer
+            self.label_encoder = label_encoder
+            self.max_length = max_length
+        
+        def predict(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            predictions = self.model.predict(padded)
+            predicted_classes = np.argmax(predictions, axis=1)
+            return self.label_encoder.inverse_transform(predicted_classes)
+        
+        def predict_proba(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            return self.model.predict(padded)
+    
+    wrapper = LSTMWrapper(model, tokenizer, label_encoder, max_length)
     
     # Save the model if requested
     if save:
-        metadata_extras = {'training_time': training_time}
-        save_model(pipeline, SVM_MODEL_FILE, "svm", accuracy, train_df, metadata_extras)
+        save_lstm_model(wrapper, LSTM_MODEL_FILE, accuracy, train_df, training_time)
     
-    return pipeline
+    return wrapper
 
-def build_fast_svm_classifier(train_df, test_df, save=True):
-    """Build a fast Linear SVM classifier."""
-    from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.svm import LinearSVC
+def build_fast_lstm_classifier(train_df, test_df, save=True):
+    """Build a fast LSTM classifier with reduced complexity."""
+    if not TENSORFLOW_AVAILABLE:
+        print("Error: TensorFlow not available. Please install TensorFlow to use LSTM classifier.")
+        return None
     
-    print("=== Fast Linear SVM Training Setup ===")
+    print("=== Fast LSTM Training Setup ===")
     
-    # Use LinearSVC wrapped in CalibratedClassifierCV for probabilities
-    base_svm = LinearSVC(random_state=42, max_iter=1000, dual=False,verbose=True)
-    calibrated_svm = CalibratedClassifierCV(base_svm, cv=3)
+    # Prepare data with reduced parameters for faster training
+    X_train = train_df['content'].values
+    X_test = test_df['content'].values
+    y_train = train_df['sender'].values
+    y_test = test_df['sender'].values
     
-    pipeline = Pipeline([
-        ('tfidf', TfidfVectorizer(
-            max_features=2000,  # Reduced features
-            min_df=3,
-            max_df=0.7,
-            stop_words='english'
-        )),
-        ('classifier', calibrated_svm)
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y_train_encoded = label_encoder.fit_transform(y_train)
+    y_test_encoded = label_encoder.transform(y_test)
+    y_train_categorical = to_categorical(y_train_encoded)
+    y_test_categorical = to_categorical(y_test_encoded)
+    
+    # Reduced tokenization parameters
+    max_features = 5000  # Reduced vocabulary
+    max_length = 50      # Shorter sequences
+    
+    tokenizer = Tokenizer(num_words=max_features, oov_token="<OOV>")
+    tokenizer.fit_on_texts(X_train)
+    
+    X_train_seq = tokenizer.texts_to_sequences(X_train)
+    X_test_seq = tokenizer.texts_to_sequences(X_test)
+    
+    X_train_padded = pad_sequences(X_train_seq, maxlen=max_length, padding='post', truncating='post')
+    X_test_padded = pad_sequences(X_test_seq, maxlen=max_length, padding='post', truncating='post')
+    
+    # Build simpler LSTM model
+    model = Sequential([
+        Embedding(input_dim=max_features, output_dim=64, input_length=max_length),
+        LSTM(32, dropout=0.2),
+        Dense(len(label_encoder.classes_), activation='softmax')
     ])
     
-    print("Training Fast Linear SVM...")
-    start_time = time.time()
-    pipeline.fit(train_df['content'], train_df['sender'])
-    training_time = time.time() - start_time
+    model.compile(
+        optimizer='adam',
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
     
-    print(f"✓ Fast SVM completed in {training_time:.2f} seconds")
+    print("Training Fast LSTM...")
+    start_time = time.time()
+    
+    # Train with fewer epochs
+    model.fit(
+        X_train_padded, y_train_categorical,
+        batch_size=64,  # Larger batch size
+        epochs=5,       # Fewer epochs
+        validation_split=0.1,
+        verbose=1
+    )
+    
+    training_time = time.time() - start_time
+    print(f"✓ Fast LSTM completed in {training_time:.2f} seconds")
     
     # Evaluate
-    y_pred = pipeline.predict(test_df['content'])
-    accuracy = accuracy_score(test_df['sender'], y_pred)
+    y_pred_proba = model.predict(X_test_padded)
+    y_pred_encoded = np.argmax(y_pred_proba, axis=1)
+    y_pred = label_encoder.inverse_transform(y_pred_encoded)
+    accuracy = accuracy_score(y_test, y_pred)
     print(f"✅ Accuracy: {accuracy:.4f}")
     
-    if save:
-        metadata_extras = {'training_time': training_time}
-        save_model(pipeline, SVM_MODEL_FILE, "fast_svm", accuracy, train_df, metadata_extras)
+    # Create wrapper
+    class LSTMWrapper:
+        def __init__(self, model, tokenizer, label_encoder, max_length):
+            self.model = model
+            self.tokenizer = tokenizer
+            self.label_encoder = label_encoder
+            self.max_length = max_length
+        
+        def predict(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            predictions = self.model.predict(padded)
+            predicted_classes = np.argmax(predictions, axis=1)
+            return self.label_encoder.inverse_transform(predicted_classes)
+        
+        def predict_proba(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            return self.model.predict(padded)
     
-    return pipeline
+    wrapper = LSTMWrapper(model, tokenizer, label_encoder, max_length)
+    
+    if save:
+        save_lstm_model(wrapper, LSTM_MODEL_FILE, accuracy, train_df, training_time)
+    
+    return wrapper
 
 def build_random_forest_classifier(train_df, test_df, save=True):
     """Build and evaluate a Random Forest classifier."""
@@ -1079,6 +1223,101 @@ def load_model(filepath):
     print(f"Loading model from {filepath}")
     return joblib.load(filepath)
 
+def save_lstm_model(lstm_wrapper, filepath, accuracy, train_df, training_time):
+    """Save an LSTM model and its components."""
+    if not TENSORFLOW_AVAILABLE:
+        print("TensorFlow not available, cannot save LSTM model")
+        return
+    
+    import pickle
+
+    # Save the Keras model
+    lstm_wrapper.model.save(filepath)
+    
+    # Save tokenizer and label encoder
+    tokenizer_path = filepath.replace('.h5', '_tokenizer.pkl')
+    encoder_path = filepath.replace('.h5', '_encoder.pkl')
+    metadata_path = filepath.replace('.h5', '_metadata.pkl')
+    
+    with open(tokenizer_path, 'wb') as f:
+        pickle.dump(lstm_wrapper.tokenizer, f)
+    
+    with open(encoder_path, 'wb') as f:
+        pickle.dump(lstm_wrapper.label_encoder, f)
+    
+    # Save metadata including max_length and training info
+    metadata = {
+        'max_length': lstm_wrapper.max_length,
+        'accuracy': accuracy,
+        'training_time': training_time,
+        'num_samples': len(train_df)
+    }
+    
+    with open(metadata_path, 'wb') as f:
+        pickle.dump(metadata, f)
+    
+    print(f"LSTM model saved to {filepath}")
+    print(f"Tokenizer saved to {tokenizer_path}")
+    print(f"Label encoder saved to {encoder_path}")
+    print(f"Metadata saved to {metadata_path}")
+
+def load_lstm_model(filepath):
+    """Load an LSTM model and its components."""
+    import pickle
+    
+    if not os.path.exists(filepath):
+        return None
+    
+    if not TENSORFLOW_AVAILABLE:
+        print("TensorFlow not available, cannot load LSTM model")
+        return None
+    
+    print(f"Loading LSTM model from {filepath}")
+    
+    # Load the Keras model
+    model = tf.keras.models.load_model(filepath)
+    
+    # Load tokenizer and label encoder
+    tokenizer_path = filepath.replace('.h5', '_tokenizer.pkl')
+    encoder_path = filepath.replace('.h5', '_encoder.pkl')
+    
+    with open(tokenizer_path, 'rb') as f:
+        tokenizer = pickle.load(f)
+    
+    with open(encoder_path, 'rb') as f:
+        label_encoder = pickle.load(f)
+    
+    # Get max_length from metadata or use default
+    metadata_path = filepath.replace('.h5', '_metadata.pkl')
+    try:
+        with open(metadata_path, 'rb') as f:
+            metadata = pickle.load(f)
+        max_length = metadata.get('max_length', 100)
+    except:
+        max_length = 100
+    
+    # Create wrapper
+    class LSTMWrapper:
+        def __init__(self, model, tokenizer, label_encoder, max_length):
+            self.model = model
+            self.tokenizer = tokenizer
+            self.label_encoder = label_encoder
+            self.max_length = max_length
+        
+        def predict(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            predictions = self.model.predict(padded)
+            predicted_classes = np.argmax(predictions, axis=1)
+            return self.label_encoder.inverse_transform(predicted_classes)
+        
+        def predict_proba(self, texts):
+            sequences = self.tokenizer.texts_to_sequences(texts)
+            padded = pad_sequences(sequences, maxlen=self.max_length, padding='post', truncating='post')
+            return self.model.predict(padded)
+    
+    return LSTMWrapper(model, tokenizer, label_encoder, max_length)
+
 def get_model_metadata():
     """Get metadata about saved models."""
     if not os.path.exists(MODEL_METADATA_FILE):
@@ -1159,11 +1398,11 @@ def train_all_models(emails_df):
     models['naive_bayes'] = build_naive_bayes_classifier(train_df, test_df)
     model_times['naive_bayes'] = time.time() - start_time
     
-    # Train SVM model (usually the slowest)
-    print(f"\n[2/{total_models}] ⚡ Training SVM Model (This will take the longest)")
+    # Train LSTM model (replaces SVM)
+    print(f"\n[2/{total_models}] 🧠 Training LSTM Model (This may take a while)")
     start_time = time.time()
-    models['svm'] = build_fast_svm_classifier(train_df, test_df)
-    model_times['svm'] = time.time() - start_time
+    models['lstm'] = build_fast_lstm_classifier(train_df, test_df)
+    model_times['lstm'] = time.time() - start_time
     
     # Train Random Forest model
     print(f"\n[3/{total_models}] 🌲 Training Random Forest Model")
@@ -1227,14 +1466,17 @@ def load_all_models():
     model_files = {
         'naive_bayes': BASELINE_MODEL_FILE,
         'optimized_naive_bayes': OPTIMIZED_MODEL_FILE,
-        'svm': SVM_MODEL_FILE,
+        'lstm': LSTM_MODEL_FILE,
         'random_forest': RANDOM_FOREST_MODEL_FILE,
         'logistic_regression': LOGISTIC_REGRESSION_MODEL_FILE,
         'neural_network': NEURAL_NETWORK_MODEL_FILE
     }
     
     for name, filepath in model_files.items():
-        model = load_model(filepath)
+        if name == 'lstm':
+            model = load_lstm_model(filepath)
+        else:
+            model = load_model(filepath)
         if model is not None:
             models[name] = model
             print(f"Loaded {name.replace('_', ' ').title()} model")
