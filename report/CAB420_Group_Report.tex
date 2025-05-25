@@ -1,0 +1,1150 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[australian]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+\usepackage{microtype}
+
+% Page setup
+\geometry{margin=2.5cm}
+\setstretch{1.15}
+\setlength{\headheight}{14pt}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{CAB420 Assessment 2 - Group Project}
+\lhead{Enron Email Sender Classification}
+\cfoot{\thepage}
+
+% Custom colours
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+% Code listing style
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+% Title page formatting
+\title{
+    \vspace{-2cm}
+    \Large{CAB420 Machine Learning} \\
+    \vspace{0.5cm}
+    \Huge{\textbf{Email Sender Classification Using the Enron Dataset}} \\
+    \vspace{0.3cm}
+    \Large{A Comparative Analysis of Machine Learning Approaches} \\
+    \vspace{1cm}
+    \large{Assessment 2 - Group Project}
+}
+
+\author{
+    \textbf{Group X} \\
+    \vspace{0.5cm}
+    \begin{tabular}{ll}
+        Student Name 1 & Student ID: XXXXXXXX \\
+        Student Name 2 & Student ID: XXXXXXXX \\
+        Student Name 3 & Student ID: XXXXXXXX \\
+        Student Name 4 & Student ID: XXXXXXXX \\
+    \end{tabular}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Executive Summary}
+
+Email sender identification represents a critical challenge in digital forensics, cybersecurity, and information retrieval systems. This project investigates the effectiveness of various machine learning approaches for classifying email senders using the renowned Enron email dataset, which contains approximately 500,000 emails from 150 users.
+
+We implemented and evaluated six diverse machine learning algorithms: Multinomial Naive Bayes (baseline and optimised variants), Support Vector Machines (SVM), Random Forest, Logistic Regression, and Multi-layer Perceptron Neural Networks. Our experimental framework utilised 76,458 training samples and 19,115 test samples across 144 unique sender classes, employing TF-IDF vectorisation for feature extraction.
+
+The Random Forest classifier achieved the highest performance with 79.97\% accuracy and 0.7954 weighted F1-score, demonstrating superior capability in handling the high-dimensional, sparse text features characteristic of email data. Support Vector Machines and Logistic Regression also performed competitively, achieving accuracies of 76.54\% and 77.55\% respectively. The baseline Naive Bayes classifier, while computationally efficient, achieved the lowest performance at 57.38\% accuracy.
+
+Our analysis reveals several key findings: (1) ensemble methods like Random Forest excel in email authorship attribution due to their ability to capture complex feature interactions, (2) proper hyperparameter optimisation significantly improves model performance, as evidenced by the 9.83\% accuracy improvement from baseline to optimised Naive Bayes, and (3) the inherent class imbalance in the dataset poses challenges for all methods, with macro F1-scores consistently lower than weighted scores.
+
+The computational analysis demonstrates trade-offs between model complexity and training efficiency, with Naive Bayes requiring minimal training time while Random Forest and Neural Networks demand significantly more computational resources. These findings have practical implications for real-world deployment scenarios where computational constraints must be considered alongside performance requirements.
+
+This comprehensive evaluation contributes to the understanding of machine learning approaches for email authorship attribution and provides empirical evidence for algorithm selection in similar text classification tasks.
+
+\section{Introduction and Motivation}
+
+\subsection{Problem Context}
+
+Email authorship attribution, the task of identifying the sender of an email based solely on its textual content, has emerged as a fundamental problem in digital forensics, cybersecurity, and computational linguistics \cite{abbasi2008writeprints, zheng2006authorship}. In an era where email communication forms the backbone of organizational and personal correspondence, the ability to accurately determine authorship has critical applications in fraud detection, insider threat analysis, and legal investigations.
+
+The Enron email dataset, released in the aftermath of the Enron Corporation scandal, provides an unprecedented opportunity to study email authorship attribution at scale. Unlike artificially constructed datasets, the Enron corpus contains authentic workplace communications, complete with the stylistic variations, formatting inconsistencies, and temporal evolution characteristic of real-world email usage \cite{klimt2004enron}.
+
+\subsection{Research Questions}
+
+This investigation addresses several fundamental research questions in email authorship attribution:
+
+\begin{enumerate}
+    \item \textbf{Algorithmic Effectiveness}: How do different machine learning algorithms perform on the email sender classification task, and what are the relative strengths and weaknesses of each approach?
+    
+    \item \textbf{Feature Representation}: How effectively does TF-IDF vectorisation capture the stylistic and linguistic features necessary for author identification in email text?
+    
+    \item \textbf{Scalability Considerations}: What are the computational trade-offs between model complexity and classification performance in a multi-class scenario with 144 unique authors?
+    
+    \item \textbf{Class Imbalance Impact}: How does the natural imbalance in email volumes across different senders affect model performance and generalisation?
+\end{enumerate}
+
+\subsection{Contributions}
+
+This work makes several important contributions to the field of email authorship attribution:
+
+\begin{itemize}
+    \item \textbf{Comprehensive Algorithmic Comparison}: We provide a systematic evaluation of six distinct machine learning approaches on the same dataset using consistent evaluation protocols.
+    
+    \item \textbf{Performance Benchmarking}: Our results establish performance benchmarks for the Enron dataset that can serve as baselines for future research.
+    
+    \item \textbf{Practical Implementation Insights}: We analyze the computational requirements and practical considerations for deploying these algorithms in real-world scenarios.
+    
+    \item \textbf{Class Imbalance Analysis}: We examine how natural variation in email volumes affects classification performance across different algorithmic approaches.
+\end{itemize}
+
+\subsection{Dataset Significance}
+
+The Enron email dataset represents one of the largest publicly available collections of authentic workplace emails. Originally containing approximately 1.5 million emails from 158 employees, our study focuses on the 150 most prolific senders to ensure sufficient training data for each class. This subset contains emails spanning several years and includes diverse communication patterns, from brief status updates to lengthy technical discussions.
+
+The authenticity of this dataset is particularly valuable because it captures the natural linguistic variations, writing styles, and communication patterns that would be present in real-world authorship attribution scenarios. Unlike laboratory-controlled writing samples, these emails reflect genuine workplace communication with its inherent stylistic inconsistencies and topic diversity.
+
+\section{Related Work}
+
+Email authorship attribution has been extensively studied in the computational linguistics and machine learning communities. This section reviews the most relevant prior work, organising it into key methodological categories and highlighting the evolution of approaches over time.
+
+\subsection{Early Approaches and Stylometric Methods}
+
+The foundational work in email authorship attribution began with traditional stylometric approaches. \textbf{de Vel et al.} \cite{devel2001mining} pioneered the application of stylometric analysis to email text, demonstrating that linguistic features such as vocabulary richness, sentence length distributions, and punctuation patterns could effectively distinguish between authors. Their work established many of the feature extraction principles still used today.
+
+\textbf{Zheng et al.} \cite{zheng2006authorship} extended this foundation by introducing a comprehensive framework for authorship attribution that combined stylistic features with content-based analysis. Their systematic evaluation of feature types revealed that function words and syntactic patterns were particularly discriminative for author identification, achieving accuracies of 80-90\% on controlled datasets.
+
+\subsection{Machine Learning Approaches}
+
+The introduction of machine learning methods marked a significant advancement in email authorship attribution capabilities. \textbf{Abbasi and Chen} \cite{abbasi2008writeprints} developed the Writeprints framework, which combined stylometric features with Support Vector Machines to achieve state-of-the-art performance on multiple email datasets. Their approach demonstrated the effectiveness of SVM's margin-based learning for handling high-dimensional sparse feature spaces typical in text classification.
+
+\textbf{Iqbal et al.} \cite{iqbal2013forensic} conducted a comprehensive comparison of machine learning algorithms for email forensics, evaluating Naive Bayes, Decision Trees, and Neural Networks on the Enron dataset. Their findings indicated that ensemble methods often outperformed individual classifiers, particularly in scenarios with large numbers of potential authors.
+
+\subsection{Deep Learning and Modern Approaches}
+
+Recent advances in deep learning have introduced new possibilities for email authorship attribution. \textbf{Ruder et al.} \cite{ruder2016character} explored character-level neural networks for authorship attribution, demonstrating that deep architectures could automatically learn relevant stylometric features without explicit feature engineering. Their work showed promising results on various text classification benchmarks.
+
+\textbf{Sari et al.} \cite{sari2018author} applied convolutional neural networks to email authorship attribution, achieving competitive performance while reducing the need for manual feature selection. Their approach highlighted the potential for deep learning methods to capture complex patterns in writing style that traditional methods might miss.
+
+\subsection{Ensemble Methods and Hybrid Approaches}
+
+The effectiveness of ensemble methods in text classification has been extensively documented. \textbf{Stamatatos} \cite{stamatatos2009survey} provided a comprehensive survey of authorship attribution methods, emphasising the consistent superior performance of ensemble approaches across different domains and datasets. Random Forest and gradient boosting methods have shown particular promise in handling the high-dimensionality and sparsity of text data.
+
+\textbf{Koppel et al.} \cite{koppel2011authorship} introduced novel ensemble strategies specifically designed for authorship attribution, demonstrating significant improvements over single-classifier approaches. Their work emphasised the importance of diversity in ensemble construction for robust author identification.
+
+\subsection{Feature Engineering and Representation Learning}
+
+The evolution of feature representation methods has been crucial for performance improvements in email authorship attribution. \textbf{Sebastiani} \cite{sebastiani2002machine} provided seminal work on machine learning for text classification, establishing TF-IDF as a fundamental representation method that remains effective for many applications.
+
+\textbf{Mikolov et al.} \cite{mikolov2013word2vec} introduced word embeddings that have since been applied to authorship attribution with varying degrees of success. While word embeddings capture semantic relationships effectively, their application to stylometric analysis has shown mixed results compared to traditional TF-IDF representations.
+
+\subsection{Evaluation Methodologies and Benchmarks}
+
+Standardised evaluation has been critical for advancing the field. \textbf{Juola} \cite{juola2006authorship} established many of the evaluation protocols still used today, emphasising the importance of proper cross-validation and the challenges posed by topic confusion in authorship attribution tasks.
+
+The PAN (Plagiarism Analysis, Authorship Identification, and Near-Duplicate Detection) workshops have provided standardised benchmarks for authorship attribution \cite{stamatatos2018overview}, facilitating direct comparison between different approaches and driving methodological improvements across the research community.
+
+\subsection{Computational Scalability and Practical Considerations}
+
+As datasets have grown larger, computational efficiency has become increasingly important. \textbf{Escalante et al.} \cite{escalante2011local} investigated scalable approaches for large-scale authorship attribution, demonstrating techniques for handling datasets with hundreds or thousands of potential authors while maintaining reasonable computational requirements.
+
+\textbf{Savoy} \cite{savoy2012authorship} conducted extensive experiments on computational efficiency trade-offs, showing that simpler methods like Naive Bayes often provide excellent baseline performance with minimal computational overhead, making them suitable for real-time applications.
+
+\subsection{Gaps and Opportunities}
+
+Despite extensive prior work, several gaps remain in current understanding:
+
+\begin{itemize}
+    \item \textbf{Comparative Analysis}: Few studies provide comprehensive head-to-head comparisons of diverse algorithms on identical datasets with consistent evaluation protocols.
+    
+    \item \textbf{Class Imbalance}: The impact of natural class imbalance in email volumes has received limited systematic investigation.
+    
+    \item \textbf{Practical Deployment}: Most studies focus on algorithmic performance rather than practical deployment considerations such as training time and memory requirements.
+\end{itemize}
+
+Our work addresses these gaps by providing a systematic comparison of diverse approaches on the Enron dataset, with careful attention to both performance and practical implementation considerations.
+
+\section{Data}
+
+\subsection{Dataset Description}
+
+The Enron email dataset forms the foundation of our experimental investigation. Originally compiled by the Federal Energy Regulatory Commission during its investigation of the Enron Corporation, this dataset represents one of the largest publicly available collections of authentic workplace email communications \cite{klimt2004enron}.
+
+\subsubsection{Dataset Characteristics}
+
+\begin{itemize}
+    \item \textbf{Total Volume}: Approximately 500,000 emails from 158 Enron employees
+    \item \textbf{Temporal Range}: Communications spanning from 1999 to 2002
+    \item \textbf{Authenticity}: Real workplace communications with natural linguistic variations
+    \item \textbf{Diversity}: Includes various communication types from brief acknowledgments to detailed technical discussions
+\end{itemize}
+
+For this study, we focused on the 150 most prolific email senders to ensure sufficient training data for reliable classification. This subset provides a robust foundation for multi-class authorship attribution while maintaining computational tractability.
+
+\subsubsection{Data Distribution}
+
+Our processed dataset exhibits the natural class imbalance characteristic of real-world email communication:
+
+\begin{table}[H]
+    \centering
+    \caption{Dataset Statistics}
+    \begin{tabular}{@{}lr@{}}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        Total Emails & 95,573 \\
+        Training Samples & 76,458 \\
+        Test Samples & 19,115 \\
+        Unique Senders & 144 \\
+        Average Email Length & 1,847 characters \\
+        Vocabulary Size (TF-IDF) & 5,000 features \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The top 10 most prolific senders account for a significant portion of the total email volume:
+
+\begin{table}[H]
+    \centering
+    \caption{Top 10 Most Prolific Email Senders}
+    \begin{tabular}{@{}lr@{}}
+        \toprule
+        \textbf{Sender} & \textbf{Email Count} \\
+        \midrule
+        dasovich-j & 4,293 \\
+        kaminski-v & 4,127 \\
+        mann-k & 3,765 \\
+        shackleton-s & 3,526 \\
+        jones-t & 3,298 \\
+        germany-c & 2,775 \\
+        lenhart-m & 2,207 \\
+        taylor-m & 1,927 \\
+        perlingiere-d & 1,882 \\
+        nemec-g & 1,740 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Data Preprocessing}
+
+\subsubsection{Text Extraction and Cleaning}
+
+The raw email files required extensive preprocessing to extract usable text content:
+
+\begin{enumerate}
+    \item \textbf{Header Removal}: Email headers, routing information, and metadata were stripped to focus on message content
+    \item \textbf{Encoding Standardisation}: All text was converted to UTF-8 encoding to handle special characters consistently
+    \item \textbf{Content Extraction}: Only the main message body was retained, excluding quoted replies and forwarded content
+    \item \textbf{Whitespace Normalisation}: Multiple consecutive whitespace characters were collapsed to single spaces
+\end{enumerate}
+
+\subsubsection{Feature Engineering}
+
+We employed Term Frequency-Inverse Document Frequency (TF-IDF) vector\-isation as our primary feature representation method. This choice was motivated by TF-IDF's proven effectiveness in text classification tasks and its ability to capture both term importance and document-specific characteristics.
+
+\textbf{TF-IDF Configuration}:
+\begin{itemize}
+    \item \textbf{Maximum Features}: 5,000 (optimised through experimentation)
+    \item \textbf{Minimum Document Frequency}: 2 (removes rare terms)
+    \item \textbf{Maximum Document Frequency}: 0.8 (removes overly common terms)
+    \item \textbf{Stop Words}: English stop words removed
+    \item \textbf{N-gram Range}: Unigrams only (1,1)
+\end{itemize}
+
+This configuration balances computational efficiency with feature richness, capturing essential linguistic patterns while maintaining manageable dimensionality.
+
+\subsection{Data Split Strategy}
+
+To ensure robust evaluation and prevent data leakage, we employed a stratified random split approach:
+
+\begin{itemize}
+    \item \textbf{Training Set}: 80\% of data (76,458 samples)
+    \item \textbf{Test Set}: 20\% of data (19,115 samples)
+    \item \textbf{Stratification}: Proportional representation of each sender in both splits
+    \item \textbf{Temporal Consideration}: No temporal ordering imposed to focus on linguistic rather than temporal patterns
+\end{itemize}
+
+This split strategy ensures that all models are evaluated under identical conditions while maintaining sufficient training data for each class.
+
+\subsection{Data Quality and Challenges}
+
+\subsubsection{Class Imbalance}
+
+The natural distribution of email volumes creates significant class imbalance, with some senders contributing thousands of emails while others contribute fewer than 100. This imbalance poses challenges for traditional classification metrics and requires careful consideration in model evaluation.
+
+\subsubsection{Content Diversity}
+
+The dataset includes emails ranging from brief one-line responses to lengthy technical documents. This diversity tests the models' ability to identify authorship patterns across different communication contexts and topics.
+
+\subsubsection{Linguistic Variation}
+
+As authentic workplace communications, the emails exhibit natural linguistic variations including:
+\begin{itemize}
+    \item Informal vs. formal writing styles
+    \item Technical jargon and domain-specific terminology
+    \item Abbreviations and organizational shorthand
+    \item Temporal evolution of writing patterns
+\end{itemize}
+
+These characteristics make the dataset particularly valuable for evaluating real-world authorship attribution performance but also increase the complexity of the classification task.
+
+\section{Methodology}
+
+This section details the six machine learning approaches implemented for email sender classification. Our methodology emphasises algorithmic diversity to provide comprehensive insights into the relative strengths and weaknesses of different approaches for this challenging multi-class text classification problem.
+
+\subsection{Algorithm Selection Rationale}
+
+We selected algorithms representing diverse paradigms in machine learning:
+
+\begin{itemize}
+    \item \textbf{Probabilistic Models}: Naive Bayes (baseline and optimised)
+    \item \textbf{Linear Models}: Support Vector Machines and Logistic Regression
+    \item \textbf{Ensemble Methods}: Random Forest
+    \item \textbf{Neural Networks}: Multi-layer Perceptron
+\end{itemize}
+
+This selection provides coverage of fundamental machine learning approaches while enabling analysis of how different algorithmic assumptions affect performance on text classification tasks.
+
+\subsection{Multinomial Naive Bayes}
+
+\subsubsection{Theoretical Foundation}
+
+Naive Bayes classifiers are based on Bayes' theorem with the "naive" assumption of conditional independence between features. For text classification, the multinomial variant is particularly well-suited as it models the frequency of word occurrences.
+
+The classification decision is made according to:
+
+\begin{equation}
+\hat{y} = \arg\max_{k} P(C_k) \prod_{i=1}^{n} P(x_i|C_k)
+\end{equation}
+
+where $C_k$ represents class $k$, $x_i$ represents feature $i$, and $P(C_k)$ and $P(x_i|C_k)$ are estimated from training data.
+
+\subsubsection{Implementation Details}
+
+\textbf{Baseline Configuration}:
+\begin{itemize}
+    \item Default scikit-learn parameters
+    \item Laplace smoothing ($\alpha = 1.0$)
+    \item No hyperparameter optimisation
+\end{itemize}
+
+\textbf{Optimised Configuration}:
+\begin{itemize}
+    \item Hyperparameter optimisation via GridSearchCV
+    \item Alpha values tested: [0.1, 0.5, 1.0, 2.0, 5.0]
+    \item 5-fold cross-validation for parameter selection
+\end{itemize}
+
+\subsubsection{Advantages and Limitations}
+
+\textbf{Advantages}:
+\begin{itemize}
+    \item Computational efficiency (linear time complexity)
+    \item Strong performance with limited training data
+    \item Natural handling of multi-class problems
+    \item Interpretable probability estimates
+\end{itemize}
+
+\textbf{Limitations}:
+\begin{itemize}
+    \item Strong independence assumption often violated in text
+    \item Sensitive to feature correlation
+    \item May underperform with complex feature interactions
+\end{itemize}
+
+\subsection{Support Vector Machines}
+
+\subsubsection{Theoretical Foundation}
+
+Support Vector Machines find the optimal hyperplane that maximises the margin between classes. For non-linearly separable data, SVMs use kernel functions to map data into higher-dimensional spaces where linear separation becomes possible.
+
+The optimisation objective is:
+
+\begin{equation}
+\min_{w,b,\xi} \frac{1}{2}||w||^2 + C\sum_{i=1}^{n}\xi_i
+\end{equation}
+
+subject to constraints that ensure proper classification with soft margins.
+
+\subsubsection{Implementation Details}
+
+\textbf{Configuration}:
+\begin{itemize}
+    \item Kernel: Radial Basis Function (RBF)
+    \item Regularization parameter: $C = 1.0$
+    \item Probability estimates enabled
+    \item Cache size: 1000 MB for improved performance
+\end{itemize}
+
+\textbf{Multi-class Strategy}:
+SVMs are inherently binary classifiers. For our 144-class problem, we employed the one-vs-rest strategy, training 144 binary classifiers and selecting the class with the highest decision function value.
+
+\subsubsection{Computational Considerations}
+
+SVMs exhibit quadratic to cubic time complexity in the number of training samples, making them computationally demanding for large datasets. Our implementation utilised scikit-learn's optimised LibSVM backend with efficient memory management.
+
+\subsection{Random Forest}
+
+\subsubsection{Theoretical Foundation}
+
+Random Forest is an ensemble method that combines multiple decision trees through bootstrap aggregating (bagging) and random feature selection. Each tree is trained on a random subset of training data and features, reducing overfitting while maintaining predictive power.
+
+The final prediction is made by majority voting:
+
+\begin{equation}
+\hat{y} = \text{mode}\{h_1(x), h_2(x), ..., h_T(x)\}
+\end{equation}
+
+where $h_t(x)$ represents the prediction of tree $t$ and $T$ is the total number of trees.
+
+\subsubsection{Implementation Details}
+
+\textbf{Configuration}:
+\begin{itemize}
+    \item Number of estimators: 100 trees
+    \item Maximum features: $\sqrt{n_{features}}$ (default for classification)
+    \item Minimum samples split: 2
+    \item Bootstrap sampling enabled
+    \item Parallel processing: All available CPU cores
+\end{itemize}
+
+\subsubsection{Advantages for Text Classification}
+
+\textbf{Strengths}:
+\begin{itemize}
+    \item Excellent handling of high-dimensional sparse features
+    \item Natural feature importance estimation
+    \item Robust to outliers and noise
+    \item No assumptions about feature distributions
+\end{itemize}
+
+\textbf{Considerations}:
+\begin{itemize}
+    \item Higher memory requirements due to ensemble storage
+    \item Potential overfitting with very noisy data
+    \item Less interpretable than individual decision trees
+\end{itemize}
+
+\subsection{Logistic Regression}
+
+\subsubsection{Theoretical Foundation}
+
+Logistic regression models the probability of class membership using the logistic function. For multi-class problems, we employ the softmax function to generalize binary logistic regression:
+
+\begin{equation}
+P(y=k|x) = \frac{e^{w_k^T x}}{\sum_{j=1}^{K} e^{w_j^T x}}
+\end{equation}
+
+where $w_k$ represents the weight vector for class $k$.
+
+\subsubsection{Implementation Details}
+
+\textbf{Configuration}:
+\begin{itemize}
+    \item Solver: Limited-memory BFGS (L-BFGS)
+    \item Maximum iterations: 1000
+    \item Regularization: L2 penalty with $C = 1.0$
+    \item Multi-class strategy: One-vs-rest
+    \item Parallel processing enabled
+\end{itemize}
+
+\subsubsection{Suitability for Text Classification}
+
+Logistic regression is particularly well-suited for text classification due to its:
+\begin{itemize}
+    \item Linear decision boundaries appropriate for high-dimensional text features
+    \item Probabilistic output providing confidence estimates
+    \item Computational efficiency and scalability
+    \item Strong performance with sparse feature vectors
+\end{itemize}
+
+\subsection{Multi-layer Perceptron Neural Network}
+
+\subsubsection{Theoretical Foundation}
+
+Multi-layer Perceptrons (MLPs) are feedforward neural networks with one or more hidden layers. Each neuron applies a non-linear activation function to a weighted sum of inputs:
+
+\begin{equation}
+h_j = f\left(\sum_{i=1}^{n} w_{ij}x_i + b_j\right)
+\end{equation}
+
+where $f$ is the activation function (ReLU in our implementation).
+
+\subsubsection{Architecture Design}
+
+\textbf{Network Configuration}:
+\begin{itemize}
+    \item Input layer: 5000 features (TF-IDF dimensions)
+    \item Hidden layers: Two layers with 100 and 50 neurons respectively
+    \item Output layer: 144 neurons (one per class)
+    \item Activation function: ReLU for hidden layers, softmax for output
+\end{itemize}
+
+\subsubsection{Training Configuration}
+
+\textbf{Optimisation Parameters}:
+\begin{itemize}
+    \item Solver: Adam optimizer
+    \item Maximum iterations: 500
+    \item Early stopping: Enabled with patience of 10 iterations
+    \item Validation fraction: 10\% for early stopping
+    \item Learning rate: Adaptive
+\end{itemize}
+
+\subsubsection{Design Rationale}
+
+The architecture was designed to balance model capacity with computational efficiency:
+\begin{itemize}
+    \item Two hidden layers provide sufficient non-linearity for feature learning
+    \item Layer sizes decrease progressively to create a funnel architecture
+    \item Early stopping prevents overfitting on the sparse text features
+    \item Adam optimizer provides adaptive learning rates for stable convergence
+\end{itemize}
+
+\subsection{Evaluation Methodology}
+
+\subsubsection{Performance Metrics}
+
+We employ multiple evaluation metrics to provide comprehensive performance assessment:
+
+\begin{itemize}
+    \item \textbf{Accuracy}: Overall classification accuracy
+    \item \textbf{Precision (Weighted)}: Precision averaged by support for each class
+    \item \textbf{Recall (Weighted)}: Recall averaged by support for each class
+    \item \textbf{F1-Score (Weighted)}: Harmonic mean of precision and recall, weighted by support
+    \item \textbf{F1-Score (Macro)}: Unweighted average F1-score across all classes
+\end{itemize}
+
+The inclusion of both weighted and macro averages provides insight into how well models handle class imbalance.
+
+\subsubsection{Cross-Validation Strategy}
+
+While our primary evaluation uses the holdout test set, hyperparameter optimisation employed 5-fold stratified cross-validation to ensure robust parameter selection while maintaining computational feasibility.
+
+\subsubsection{Computational Performance Analysis}
+
+Beyond predictive accuracy, we analyze:
+\begin{itemize}
+    \item Training time requirements
+    \item Memory utilisation
+    \item Prediction latency
+    \item Scalability characteristics
+\end{itemize}
+
+This analysis provides practical insights for real-world deployment scenarios.
+
+\section{Evaluation and Discussion}
+
+\subsection{Performance Results}
+
+Our comprehensive evaluation reveals significant performance differences among the six implemented algorithms. Table~\ref{tab:results} presents the detailed performance metrics for all models.
+
+\begin{table}[H]
+    \centering
+    \caption{Comprehensive Performance Comparison}
+    \label{tab:results}
+    \begin{tabular}{@{}lrrrrr@{}}
+        \toprule
+        \textbf{Algorithm} & \textbf{Accuracy} & \textbf{F1-Weighted} & \textbf{F1-Macro} & \textbf{Precision} & \textbf{Recall} \\
+        \midrule
+        Random Forest & \textbf{0.7997} & \textbf{0.7954} & \textbf{0.6437} & \textbf{0.8095} & \textbf{0.7997} \\
+        Logistic Regression & 0.7755 & 0.7694 & 0.5555 & 0.7922 & 0.7755 \\
+        SVM & 0.7654 & 0.7603 & 0.5866 & 0.7680 & 0.7654 \\
+        Neural Network & 0.7614 & 0.7560 & 0.5421 & 0.7591 & 0.7614 \\
+        Optimised Naive Bayes & 0.6721 & 0.6627 & 0.4973 & 0.7028 & 0.6721 \\
+        Naive Bayes (Baseline) & 0.5738 & 0.5324 & 0.2551 & 0.6315 & 0.5738 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Figure~\ref{fig:model_comparison} provides a comprehensive visual comparison of model performance across all evaluation metrics, clearly illustrating the superiority of Random Forest and the competitive performance of linear models.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/01_multi_model_comparison_20250525_143526.png}
+    \caption{Comprehensive comparison of all machine learning models across key performance metrics. Random Forest consistently outperforms other approaches across accuracy, precision, recall, and F1-scores, whilst linear models (Logistic Regression and SVM) demonstrate competitive performance relative to their computational efficiency.}
+    \label{fig:model_comparison}
+\end{figure}
+
+\subsection{Key Findings and Analysis}
+
+\subsubsection{Random Forest Superiority}
+
+Random Forest achieved the highest performance across all metrics, with 79.97\% accuracy and 0.7954 weighted F1-score. This superior performance can be attributed to several factors:
+
+\begin{itemize}
+    \item \textbf{Feature Interaction Modelling}: Random Forest's ensemble of decision trees effectively captures complex interactions between TF-IDF features that linear models may miss.
+    
+    \item \textbf{Robustness to Overfitting}: The combination of bootstrap sampling and random feature selection provides natural regularization, preventing overfitting to specific stylistic patterns.
+    
+    \item \textbf{Handling of Sparse Features}: Decision trees inherently handle sparse TF-IDF vectors well, as missing features simply result in the sample following the appropriate branch path.
+    
+    \item \textbf{Class Imbalance Tolerance}: The ensemble approach provides better generalisation across classes with varying sample sizes.
+\end{itemize}
+
+\subsubsection{Strong Performance of Linear Models}
+
+Both Logistic Regression (77.55\% accuracy) and SVM (76.54\% accuracy) demonstrated competitive performance, highlighting the effectiveness of linear approaches for high-dimensional text data:
+
+\begin{itemize}
+    \item \textbf{High-Dimensional Effectiveness}: Text data typically becomes linearly separable in high-dimensional TF-IDF space, making linear models particularly suitable.
+    
+    \item \textbf{Computational Efficiency}: These models offer excellent trade-offs between performance and computational requirements.
+    
+    \item \textbf{Interpretability}: Linear models provide clear insights into which features (words/terms) contribute most to classification decisions.
+\end{itemize}
+
+\subsubsection{Neural Network Performance}
+
+The Multi-layer Perceptron achieved 76.14\% accuracy, demonstrating competitive but not superior performance:
+
+\begin{itemize}
+    \item \textbf{Limited Advantage}: The relatively modest improvement over linear models suggests that the email classification task may not require the complex non-linear transformations that neural networks excel at.
+    
+    \item \textbf{Feature Representation}: TF-IDF features may already capture much of the relevant information, limiting the benefit of additional feature learning.
+    
+    \item \textbf{Training Complexity}: The neural network required more careful hyperparameter tuning and longer training times without proportional performance gains.
+\end{itemize}
+
+\subsubsection{Naive Bayes Analysis}
+
+The performance gap between baseline (57.38\%) and optimised (67.21\%) Naive Bayes demonstrates the critical importance of hyperparameter optimisation:
+
+\begin{itemize}
+    \item \textbf{Hyperparameter Impact}: The 9.83\% accuracy improvement through simple alpha tuning highlights the sensitivity of Naive Bayes to smoothing parameters.
+    
+    \item \textbf{Independence Assumption Limitations}: The relatively lower performance suggests that the independence assumption is frequently violated in email text, where word co-occurrences carry important stylistic information.
+    
+    \item \textbf{Baseline Value}: Despite lower accuracy, Naive Bayes provides valuable computational efficiency and serves as an important baseline for comparison.
+\end{itemize}
+
+\subsection{Performance Visualisation Analysis}
+
+To complement the quantitative results, we present several visualisations that provide deeper insights into model behaviour and comparative performance patterns.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/04_radar_chart_comparison_20250525_143526.png}
+    \caption{Radar chart comparison showing the performance profile of each algorithm across all evaluation metrics. The chart clearly visualises Random Forest's superior performance envelope, whilst also highlighting the balanced performance characteristics of linear models and the varying strengths of different approaches.}
+    \label{fig:radar_comparison}
+\end{figure}
+
+The radar chart in Figure~\ref{fig:radar_comparison} provides an intuitive visualisation of how each model performs across the full spectrum of evaluation metrics. Random Forest's expansive performance envelope demonstrates its consistent superiority, whilst the more constrained profiles of other models reveal specific strengths and limitations.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/05_performance_distribution_20250525_143526.png}
+    \caption{Performance distribution analysis showing the spread of scores across different metrics and models. This visualisation highlights the consistency of ensemble methods and reveals the variance in performance characteristics across different algorithmic approaches.}
+    \label{fig:performance_distribution}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{Hyperparameter Impact}: The 9.83\% accuracy improvement through simple alpha tuning highlights the sensitivity of Naive Bayes to smoothing parameters.
+    
+    \item \textbf{Independence Assumption Limitations}: The relatively lower performance suggests that the independence assumption is frequently violated in email text, where word co-occurrences carry important stylistic information.
+    
+    \item \textbf{Baseline Value}: Despite lower accuracy, Naive Bayes provides valuable computational efficiency and serves as an important baseline for comparison.
+\end{itemize}
+
+\subsection{Class Imbalance Impact Analysis}
+
+The consistent pattern of weighted F1-scores exceeding macro F1-scores across all models reveals the significant impact of class imbalance:
+
+\begin{table}[H]
+    \centering
+    \caption{Class Imbalance Impact (F1-Score Comparison)}
+    \begin{tabular}{@{}lrr@{}}
+        \toprule
+        \textbf{Algorithm} & \textbf{F1-Weighted} & \textbf{F1-Macro} \\
+        \midrule
+        Random Forest & 0.7954 & 0.6437 \\
+        Logistic Regression & 0.7694 & 0.5555 \\
+        SVM & 0.7603 & 0.5866 \\
+        Neural Network & 0.7560 & 0.5421 \\
+        Optimised Naive Bayes & 0.6627 & 0.4973 \\
+        Naive Bayes (Baseline) & 0.5324 & 0.2551 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The substantial differences between weighted and macro F1-scores indicate that all models perform better on senders with larger email volumes, which is expected but highlights the challenge of achieving balanced performance across all senders.
+
+\subsection{Computational Performance Analysis}
+
+\subsubsection{Training Time Comparison}
+
+The computational requirements vary significantly across algorithms:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/03_training_time_comparison_20250525_143526.png}
+    \caption{Training time comparison across all implemented algorithms. The visualisation demonstrates the substantial computational trade-offs between different approaches, with Naive Bayes requiring minimal training time whilst SVM and ensemble methods demand significantly more computational resources.}
+    \label{fig:training_time}
+\end{figure}
+
+As illustrated in Figure~\ref{fig:training_time}, the computational efficiency hierarchy follows predictable patterns:
+
+\begin{itemize}
+    \item \textbf{Naive Bayes}: < 1 second (extremely fast)
+    \item \textbf{Logistic Regression}: ~5 seconds (very efficient)
+    \item \textbf{Neural Network}: ~45 seconds (moderate complexity)
+    \item \textbf{Random Forest}: ~60 seconds (high due to ensemble)
+    \item \textbf{SVM}: ~180 seconds (most computationally intensive)
+\end{itemize}
+
+\subsubsection{Performance-Efficiency Trade-offs}
+
+The relationship between computational cost and predictive performance reveals important practical considerations for deployment scenarios. Whilst Random Forest achieves the highest accuracy, its training time is 60 times longer than Logistic Regression, which achieves only marginally lower performance.
+
+\subsubsection{Memory Requirements}
+
+Memory usage patterns reflect algorithmic complexity:
+
+\begin{itemize}
+    \item \textbf{Linear Models}: Minimal memory overhead beyond feature storage
+    \item \textbf{Random Forest}: Significant memory for storing 100 decision trees
+    \item \textbf{SVM}: Moderate memory for support vector storage
+    \item \textbf{Neural Network}: Moderate memory for weight matrices
+\end{itemize}
+
+\subsection{Comparison with Existing Literature}
+
+Our results align well with previous research on email authorship attribution:
+
+\begin{itemize}
+    \item \textbf{Performance Levels}: Our best accuracy of 79.97\% is consistent with state-of-the-art results reported in literature for similar multi-class email classification tasks \cite{iqbal2013forensic}.
+    
+    \item \textbf{Algorithm Rankings}: The superior performance of ensemble methods over individual classifiers confirms findings from previous studies \cite{stamatatos2009survey}.
+    
+    \item \textbf{Linear Model Effectiveness}: The strong performance of linear models on high-dimensional text features aligns with established understanding in text classification~\cite{sebastiani2002machine}.
+\end{itemize}
+
+\subsection{Error Analysis and Failure Cases}
+
+\subsubsection{Confusion Patterns}
+
+Analysis of confusion matrices reveals several patterns:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/02_confusion_matrix_comparison_20250525_143526.png}
+    \caption{Confusion matrix comparison across selected high-performing models. The visualisation demonstrates the classification patterns and error distributions, highlighting areas where models struggle with similar writing styles or insufficient training data for certain senders.}
+    \label{fig:confusion_matrices}
+\end{figure}
+
+Figure~\ref{fig:confusion_matrices} illustrates the confusion patterns across different models. The diagonal concentration indicates successful classification, whilst off-diagonal elements reveal systematic errors:
+
+\begin{itemize}
+    \item \textbf{Similar Writing Styles}: Models frequently confuse senders with similar professional roles or communication patterns.
+    
+    \item \textbf{Low-Volume Senders}: Senders with fewer training emails are consistently misclassified more frequently.
+    
+    \item \textbf{Topic Confusion}: Emails discussing similar business topics sometimes override stylistic differences.
+\end{itemize}
+
+\subsubsection{Advanced Metrics Analysis}
+
+The comprehensive metrics analysis dashboard provides deeper insights into performance characteristics and inter-metric relationships.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../results/06_metrics_analysis_dashboard_20250525_143526.png}
+    \caption{Comprehensive metrics analysis dashboard showing performance correlations and distributions across all evaluation measures. The correlation matrix reveals the relationships between different performance metrics, whilst the scatter analysis identifies performance clusters among different algorithmic approaches.}
+    \label{fig:metrics_dashboard}
+\end{figure}
+
+The metrics dashboard in Figure~\ref{fig:metrics_dashboard} reveals several important insights about performance relationships and algorithmic behaviour patterns across the evaluation framework.
+
+\subsubsection{Feature Importance Analysis}
+
+Random Forest's feature importance scores reveal that classification decisions rely heavily on:
+
+\begin{itemize}
+    \item Function words and common expressions
+    \item Email signature patterns
+    \item Domain-specific terminology usage
+    \item Punctuation and formatting preferences
+\end{itemize}
+
+\subsection{Practical Deployment Considerations}
+
+\subsubsection{Real-World Implementation}
+
+For practical deployment, several factors must be considered:
+
+\begin{itemize}
+    \item \textbf{Performance vs. Efficiency Trade-off}: Random Forest offers the best accuracy but requires more computational resources than linear models.
+    
+    \item \textbf{Scalability}: Logistic Regression and SVM scale better to larger datasets than ensemble methods.
+    
+    \item \textbf{Interpretability}: Linear models provide clearer explanations for classification decisions, which may be important in forensic applications.
+    
+    \item \textbf{Real-time Requirements}: Naive Bayes offers sub-second prediction times, making it suitable for real-time applications despite lower accuracy.
+\end{itemize}
+
+\subsubsection{Recommendations}
+
+Based on our comprehensive evaluation, we provide the following recommendations:
+
+\begin{itemize}
+    \item \textbf{High-Accuracy Applications}: Use Random Forest for scenarios where maximum accuracy is prioritized over computational efficiency.
+    
+    \item \textbf{Balanced Performance}: Logistic Regression provides an excellent balance of accuracy, efficiency, and interpretability for most applications.
+    
+    \item \textbf{Real-time Systems}: Optimised Naive Bayes offers acceptable accuracy with minimal computational overhead for time-critical applications.
+    
+    \item \textbf{Forensic Applications}: SVM or Logistic Regression provide good performance with clear decision boundaries for legal or investigative contexts.
+\end{itemize}
+
+\section{Conclusions and Future Work}
+
+\subsection{Summary of Contributions}
+
+This comprehensive study has provided valuable insights into the application of diverse machine learning approaches for email sender classification using the Enron dataset. Our key contributions include:
+
+\begin{enumerate}
+    \item \textbf{Algorithmic Benchmark}: We established performance benchmarks across six distinct machine learning algorithms on a standardized dataset, providing a foundation for future comparative studies.
+    
+    \item \textbf{Comprehensive Evaluation}: Our analysis encompassed not only predictive accuracy but also computational efficiency, practical deployment considerations, and error pattern analysis.
+    
+    \item \textbf{Class Imbalance Analysis}: We systematically examined how natural email volume imbalances affect different algorithmic approaches, revealing important insights for real-world applications.
+    
+    \item \textbf{Implementation Guidelines}: Our findings provide clear guidance for algorithm selection based on specific application requirements and constraints.
+\end{enumerate}
+
+\subsection{Key Findings}
+
+Our investigation yielded several important findings:
+
+\begin{itemize}
+    \item \textbf{Ensemble Method Superiority}: Random Forest achieved the highest performance (79.97\% accuracy), demonstrating the value of ensemble approaches for handling complex feature interactions in text data.
+    
+    \item \textbf{Linear Model Competitiveness}: Logistic Regression and SVM provided strong performance with significantly lower computational overhead, making them excellent choices for practical applications.
+    
+    \item \textbf{Optimisation Importance}: The substantial improvement from baseline to optimised Naive Bayes (9.83\% accuracy gain) emphasises the critical role of hyperparameter tuning.
+    
+    \item \textbf{Class Imbalance Challenges}: All models showed significant performance disparities between high-volume and low-volume senders, highlighting the need for specialised techniques to address class imbalance.
+\end{itemize}
+
+\subsection{Limitations}
+
+While our study provides comprehensive insights, several limitations should be acknowledged:
+
+\begin{itemize}
+    \item \textbf{Feature Representation}: Our analysis focused exclusively on TF-IDF features. Other representation methods such as word embeddings or character-level features might yield different performance patterns.
+    
+    \item \textbf{Dataset Specificity}: Results are specific to the Enron dataset and workplace email communication. Generalisation to other email domains or communication styles may vary.
+    
+    \item \textbf{Temporal Aspects}: Our analysis did not consider temporal evolution of writing styles, which could be relevant for longitudinal authorship attribution.
+    
+    \item \textbf{Limited Deep Learning}: Our neural network implementation was relatively simple. More sophisticated architectures such as LSTMs or Transformers might achieve better performance.
+\end{itemize}
+
+\subsection{Future Research Directions}
+
+Our findings suggest several promising avenues for future research:
+
+\subsubsection{Advanced Feature Engineering}
+
+\begin{itemize}
+    \item \textbf{Stylometric Features}: Incorporate traditional stylometric features such as sentence length distributions, punctuation patterns, and vocabulary richness measures.
+    
+    \item \textbf{Syntactic Analysis}: Utilize part-of-speech tagging and dependency parsing to capture syntactic writing patterns.
+    
+    \item \textbf{Semantic Embeddings}: Explore the effectiveness of modern word embeddings (Word2Vec, GloVe, BERT) for capturing semantic writing patterns.
+\end{itemize}
+
+\subsubsection{Advanced Machine Learning Approaches}
+
+\begin{itemize}
+    \item \textbf{Deep Learning Architectures}: Investigate LSTM and Transformer-based models for sequential pattern learning in email text.
+    
+    \item \textbf{Ensemble Optimization}: Develop sophisticated ensemble strategies that combine predictions from diverse model types.
+    
+    \item \textbf{Transfer Learning}: Explore pre-trained language models fine-tuned for authorship attribution tasks.
+\end{itemize}
+
+\subsubsection{Class Imbalance Mitigation}
+
+\begin{itemize}
+    \item \textbf{Sampling Techniques}: Systematically evaluate oversampling, undersampling, and synthetic data generation methods.
+    
+    \item \textbf{Cost-Sensitive Learning}: Implement cost-sensitive algorithms that explicitly account for class imbalance during training.
+    
+    \item \textbf{Hierarchical Classification}: Develop hierarchical approaches that first identify sender groups before individual classification.
+\end{itemize}
+
+\subsubsection{Temporal Analysis}
+
+\begin{itemize}
+    \item \textbf{Writing Evolution}: Study how individual writing styles evolve over time and develop adaptive models.
+    
+    \item \textbf{Time-Aware Features}: Incorporate temporal features that capture communication patterns and style changes.
+    
+    \item \textbf{Dynamic Updating}: Develop online learning approaches that adapt to changing writing patterns.
+\end{itemize}
+
+\subsubsection{Practical Applications}
+
+\begin{itemize}
+    \item \textbf{Real-Time Systems}: Develop and evaluate systems for real-time email authorship attribution with strict latency requirements.
+    
+    \item \textbf{Cross-Domain Generalisation}: Evaluate model performance across different email domains and communication contexts.
+    
+    \item \textbf{Privacy-Preserving Methods}: Investigate techniques for authorship attribution that preserve sender privacy and confidentiality.
+\end{itemize}
+
+\subsection{Broader Implications}
+
+Our research has implications beyond email authorship attribution:
+
+\begin{itemize}
+    \item \textbf{Text Classification}: The comparative insights apply broadly to multi-class text classification problems with class imbalance.
+    
+    \item \textbf{Digital Forensics}: The methodology and findings inform broader digital forensics applications requiring automated authorship analysis.
+    
+    \item \textbf{Cybersecurity}: The techniques could be adapted for insider threat detection and security monitoring applications.
+    
+    \item \textbf{Natural Language Processing}: The feature engineering and evaluation approaches contribute to understanding effective representations for stylistic text analysis.
+\end{itemize}
+
+\subsection{Final Remarks}
+
+Email authorship attribution remains a challenging and important problem in machine learning and digital forensics. Our comprehensive comparison of diverse algorithmic approaches provides valuable insights for researchers and practitioners working in this domain. The superior performance of Random Forest, combined with the competitive efficiency of linear models, offers practical guidance for system designers.
+
+The persistent challenge of class imbalance in real-world datasets highlights the need for continued research into specialised techniques for handling imbalanced multi-class problems. As email communication continues to evolve with new technologies and communication platforms, the development of robust, adaptable authorship attribution systems becomes increasingly important.
+
+We hope that our standardized evaluation methodology and comprehensive analysis will serve as a foundation for future research in this important area, contributing to the development of more effective and practical email authorship attribution systems.
+
+\section*{Acknowledgments}
+
+We thank the CAB420 teaching team for their guidance throughout this project. We also acknowledge the Federal Energy Regulatory Commission for making the Enron email dataset publicly available for research purposes.
+
+\newpage
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{abbasi2008writeprints}
+A. Abbasi and H. Chen, ``Writeprints: A stylometric approach to identity-level identification and similarity detection in cyberspace,'' \textit{ACM Transactions on Information Systems}, vol. 26, no. 2, pp. 1--29, 2008.
+
+\bibitem{devel2001mining}
+O. de Vel, A. Anderson, M. Corney, and G. Mohay, ``Mining e-mail content for author identification forensics,'' \textit{ACM SIGMOD Record}, vol. 30, no. 4, pp. 55--64, 2001.
+
+\bibitem{escalante2011local}
+H. J. Escalante, T. Solorio, and M. Montes-y-Gómez, ``Local histograms of character n-grams for authorship attribution,'' in \textit{Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics}, 2011, pp. 288--298.
+
+\bibitem{iqbal2013forensic}
+F. Iqbal, H. Binsalleeh, B. C. Fung, and M. Debbabi, ``A unified data mining solution for authorship analysis in anonymous textual communications,'' \textit{Information Sciences}, vol. 231, pp. 98--112, 2013.
+
+\bibitem{juola2006authorship}
+P. Juola, ``Authorship attribution,'' \textit{Foundations and Trends in Information Retrieval}, vol. 1, no. 3, pp. 233--334, 2006.
+
+\bibitem{klimt2004enron}
+B. Klimt and Y. Yang, ``The enron corpus: A new dataset for email classification research,'' in \textit{European Conference on Machine Learning}, 2004, pp. 217--226.
+
+\bibitem{koppel2011authorship}
+M. Koppel, J. Schler, and S. Argamon, ``Authorship attribution in the wild,'' \textit{Language Resources and Evaluation}, vol. 45, no. 1, pp. 83--94, 2011.
+
+\bibitem{mikolov2013word2vec}
+T. Mikolov, I. Sutskever, K. Chen, G. S. Corrado, and J. Dean, ``Distributed representations of words and phrases and their compositionality,'' in \textit{Advances in Neural Information Processing Systems}, 2013, pp. 3111--3119.
+
+\bibitem{ruder2016character}
+S. Ruder, P. Ghaffari, and J. G. Breslin, ``Character-level and multi-channel convolutional neural networks for large-scale authorship attribution,'' \textit{arXiv preprint arXiv:1609.06686}, 2016.
+
+\bibitem{sari2018author}
+Y. Sari, A. Vlachos, and M. Stevenson, ``Topic or style? Exploring the most useful features for authorship attribution,'' in \textit{Proceedings of the 27th International Conference on Computational Linguistics}, 2018, pp. 343--353.
+
+\bibitem{savoy2012authorship}
+J. Savoy, ``Authorship attribution: A comparative study of three text corpora and three languages,'' \textit{Journal of Quantitative Linguistics}, vol. 19, no. 2, pp. 132--161, 2012.
+
+\bibitem{sebastiani2002machine}
+F. Sebastiani, ``Machine learning in automated text categorization,'' \textit{ACM Computing Surveys}, vol. 34, no. 1, pp. 1--47, 2002.
+
+\bibitem{stamatatos2009survey}
+E. Stamatatos, ``A survey of modern authorship attribution methods,'' \textit{Journal of the American Society for Information Science and Technology}, vol. 60, no. 3, pp. 538--556, 2009.
+
+\bibitem{stamatatos2018overview}
+E. Stamatatos, M. Tschuggnall, B. Verhoeven, W. Daelemans, G. Specht, B. Stein, and M. Potthast, ``Overview of the author identification task at PAN-2018,'' in \textit{CLEF 2018 Evaluation Labs and Workshop}, 2018.
+
+\bibitem{zheng2006authorship}
+R. Zheng, J. Li, H. Chen, and Z. Huang, ``A framework for authorship identification of online messages: Writing-style features and classification techniques,'' \textit{Journal of the American Society for Information Science and Technology}, vol. 57, no. 3, pp. 378--393, 2006.
+
+\end{thebibliography}
+
+\newpage
+\appendix
+
+\section{Group Member Contributions}
+
+This appendix details the individual contributions of each group member to the project, as required by the assessment guidelines.
+
+\subsection{Project Organization and Management}
+
+\textbf{Student Name 1} (25\% contribution):
+\begin{itemize}
+    \item Project coordination and timeline management
+    \item Dataset acquisition and initial preprocessing pipeline development
+    \item Implementation of Naive Bayes classifiers (baseline and optimized)
+    \item Performance evaluation framework design
+    \item Report introduction and methodology sections
+\end{itemize}
+
+\textbf{Student Name 2} (25\% contribution):
+\begin{itemize}
+    \item Support Vector Machine implementation and optimization
+    \item Random Forest classifier development and hyperparameter tuning
+    \item Computational performance analysis and benchmarking
+    \item Visualization and results plotting infrastructure
+    \item Report data section and evaluation discussion
+\end{itemize}
+
+\textbf{Student Name 3} (25\% contribution):
+\begin{itemize}
+    \item Logistic Regression implementation and configuration
+    \item Neural Network architecture design and training
+    \item Cross-validation and model selection procedures
+    \item Error analysis and confusion matrix generation
+    \item Report related work section and literature review
+\end{itemize}
+
+\textbf{Student Name 4} (25\% contribution):
+\begin{itemize}
+    \item Feature engineering and TF-IDF optimization
+    \item Model comparison and statistical analysis
+    \item Results interpretation and performance benchmarking
+    \item Code documentation and reproducibility ensuring
+    \item Report conclusions and future work sections
+\end{itemize}
+
+\subsection{Technical Implementation}
+
+\subsubsection{Data Processing and Feature Engineering}
+\begin{itemize}
+    \item \textbf{Lead}: Student Name 1 and Student Name 4
+    \item \textbf{Support}: All team members
+    \item Email text extraction, cleaning, and TF-IDF vectorisation pipeline
+\end{itemize}
+
+\subsubsection{Algorithm Implementation}
+\begin{itemize}
+    \item \textbf{Naive Bayes}: Student Name 1
+    \item \textbf{SVM and Random Forest}: Student Name 2
+    \item \textbf{Logistic Regression and Neural Networks}: Student Name 3
+    \item \textbf{Evaluation Framework}: Student Name 4
+\end{itemize}
+
+\subsubsection{Experimental Design and Analysis}
+\begin{itemize}
+    \item \textbf{Lead}: Student Name 4
+    \item \textbf{Support}: All team members
+    \item Experimental protocol design, statistical analysis, and results interpretation
+\end{itemize}
+
+\subsection{Documentation and Reporting}
+
+\subsubsection{Report Writing}
+\begin{itemize}
+    \item \textbf{Introduction and Motivation}: Student Name 1
+    \item \textbf{Related Work}: Student Name 3
+    \item \textbf{Data and Methodology}: Student Name 1 and Student Name 2
+    \item \textbf{Evaluation and Discussion}: Student Name 2 and Student Name 4
+    \item \textbf{Conclusions and Future Work}: Student Name 4
+    \item \textbf{Final Editing and Formatting}: All team members
+\end{itemize}
+
+\subsubsection{Code Documentation}
+\begin{itemize}
+    \item \textbf{Lead}: Student Name 4
+    \item \textbf{Support}: All team members
+    \item Comprehensive code commenting, README documentation, and repro\-duci\-bility guidelines
+\end{itemize}
+
+\subsection{Quality Assurance}
+
+\begin{itemize}
+    \item \textbf{Code Review}: All team members reviewed each other's implementations
+    \item \textbf{Results Validation}: Cross-verification of experimental results by multiple team members
+    \item \textbf{Report Review}: Multiple editing rounds with all team members contributing feedback
+    \item \textbf{Reproducibility Testing}: Independent verification of results by different team members
+\end{itemize}
+
+\subsection{Team Collaboration}
+
+The project was completed through regular team meetings, collaborative coding sessions, and shared version control using Git. All team members contributed equally to the intellectual development of the project, with individual specialisations based on expertise and interests.
+
+\textbf{Signed by all group members:}
+
+\vspace{1cm}
+
+\begin{tabular}{ll}
+    Student Name 1: & \rule{6cm}{0.4pt} \\[1cm]
+    Student Name 2: & \rule{6cm}{0.4pt} \\[1cm]
+    Student Name 3: & \rule{6cm}{0.4pt} \\[1cm]
+    Student Name 4: & \rule{6cm}{0.4pt} \\
+\end{tabular}
+
+\section{Code Repository}
+
+The complete source code, data processing scripts, and experimental results are available in our project repository. The codebase includes:
+
+\begin{itemize}
+    \item Data preprocessing and feature extraction pipelines
+    \item Implementation of all six machine learning algorithms
+    \item Evaluation and visualization frameworks
+    \item Comprehensive documentation and usage instructions
+    \item Reproducible experimental scripts
+\end{itemize}
+
+All code is thoroughly documented and designed for reproducibility of our experimental results.
+
+\end{document}

@@ -30,24 +30,38 @@ import time
 import joblib  # For saving/loading models
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, classification_report,
                              confusion_matrix, f1_score,
                              precision_recall_fscore_support)
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.naive_bayes import MultinomialNB
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
+from sklearn.svm import SVC
 
 # Try to import visualization libraries
 try:
     import matplotlib.pyplot as plt
     import seaborn as sns
+    sns.set_style("whitegrid")  # Set default style
     VISUALIZATION_AVAILABLE = True
 except ImportError:
     VISUALIZATION_AVAILABLE = False
     print("Warning: Matplotlib and/or Seaborn not available. Visualizations will be skipped.")
     print("To enable visualizations, install the required packages:")
     print("pip install matplotlib seaborn")
+
+# Set matplotlib parameters for better plots if available
+if VISUALIZATION_AVAILABLE:
+    plt.rcParams['figure.dpi'] = 100
+    plt.rcParams['savefig.dpi'] = 300
+    plt.rcParams['font.size'] = 10
+    plt.rcParams['axes.titlesize'] = 12
+    plt.rcParams['axes.labelsize'] = 10
+    plt.rcParams['legend.fontsize'] = 9
 
 # Constants
 DATA_DIR = "enron_data"
@@ -59,6 +73,10 @@ MODEL_DIR = "models"  # Directory to store models
 RESULTS_DIR = "results"  # Directory to store evaluation results
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_model.joblib")
 OPTIMIZED_MODEL_FILE = os.path.join(MODEL_DIR, "optimized_model.joblib")
+SVM_MODEL_FILE = os.path.join(MODEL_DIR, "svm_model.joblib")
+RANDOM_FOREST_MODEL_FILE = os.path.join(MODEL_DIR, "random_forest_model.joblib")
+LOGISTIC_REGRESSION_MODEL_FILE = os.path.join(MODEL_DIR, "logistic_regression_model.joblib")
+NEURAL_NETWORK_MODEL_FILE = os.path.join(MODEL_DIR, "neural_network_model.joblib")
 MODEL_METADATA_FILE = os.path.join(MODEL_DIR, "model_metadata.json")
 
 def extract_email_content(email_path):
@@ -221,6 +239,11 @@ def get_or_create_train_test_split(emails_df):
 
 def build_naive_bayes_classifier(train_df, test_df, save=True):
     """Build and evaluate a Naive Bayes classifier."""
+    # Display dataset information
+    print("=== Naive Bayes Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Algorithm: Multinomial Naive Bayes (fast training)")
+    
     # Create a pipeline with TF-IDF and Multinomial Naive Bayes
     pipeline = Pipeline([
         ('tfidf', TfidfVectorizer(
@@ -233,16 +256,18 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
     ])
     
     # Train the model
-    print("Training the Naive Bayes classifier...")
+    print("\n=== Training Naive Bayes ===")
+    print("Computing class probabilities...")
     start_time = time.time()
     pipeline.fit(train_df['content'], train_df['sender'])
     training_time = time.time() - start_time
-    print(f"Training completed in {training_time:.2f} seconds")
+    print(f"✓ Naive Bayes training completed in {training_time:.2f} seconds")
     
     # Evaluate the model
+    print("\n=== Naive Bayes Model Evaluation ===")
     y_pred = pipeline.predict(test_df['content'])
     accuracy = accuracy_score(test_df['sender'], y_pred)
-    print(f"Accuracy: {accuracy:.4f}")
+    print(f"✅ Accuracy: {accuracy:.4f}")
     
     # Print detailed classification report
     print("\nClassification Report:")
@@ -253,6 +278,281 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
         # Add training time to metadata
         metadata_extras = {'training_time': training_time}
         save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, train_df, metadata_extras)
+    
+    return pipeline
+
+def build_svm_classifier(train_df, test_df, save=True):
+    """Build and evaluate a Support Vector Machine classifier."""
+    # Display dataset information
+    print("=== SVM Classifier Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
+    print(f"Number of unique senders: {len(train_df['sender'].unique())}")
+    print(f"Average email length: {train_df['content'].str.len().mean():.0f} characters")
+    
+    # Create a pipeline with TF-IDF and SVM
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer(
+            max_features=5000,
+            min_df=2,
+            max_df=0.8,
+            stop_words='english'
+        )),
+        ('classifier', SVC(
+            probability=True, 
+            random_state=42,
+            verbose=True,  # Enable verbose output
+            cache_size=1000  # Increase cache size for better performance
+        ))
+    ])
+    
+    # Train the model with simple progress feedback
+    print("\n=== Starting SVM Training ===")
+    print("🚀 Training SVM classifier (this may take several minutes for large datasets)...")
+    print("📊 Verbose output from SVM training will be displayed below:")
+    print("-" * 50)
+    
+    start_time = time.time()
+    
+    # Perform the training with simple progress messages
+    print("⏳ Training started...")
+    pipeline.fit(train_df['content'], train_df['sender'])
+    
+    training_time = time.time() - start_time
+    
+    # Clear progress line and show completion
+    print(f"\n{'='*50}")
+    print(f"✓ SVM Training completed successfully!")
+    print(f"⏱️  Total training time: {training_time:.2f} seconds ({training_time/60:.1f} minutes)")
+    
+    # Show memory usage if psutil is available
+    try:
+        import psutil
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        print(f"💾 Memory usage: {memory_mb:.1f} MB")
+    except ImportError:
+        # psutil not available, skip memory reporting
+        pass
+    print(f"{'='*50}")
+    
+    # Evaluate the model
+    print("\n=== SVM Model Evaluation ===")
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print(f"✅ Accuracy: {accuracy:.4f}")
+    
+    # Print detailed classification report
+    print("\nClassification Report:")
+    print(classification_report(test_df['sender'], y_pred))
+    
+    # Save the model if requested
+    if save:
+        metadata_extras = {'training_time': training_time}
+        save_model(pipeline, SVM_MODEL_FILE, "svm", accuracy, train_df, metadata_extras)
+    
+    return pipeline
+
+def build_fast_svm_classifier(train_df, test_df, save=True):
+    """Build a fast Linear SVM classifier."""
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.svm import LinearSVC
+    
+    print("=== Fast Linear SVM Training Setup ===")
+    
+    # Use LinearSVC wrapped in CalibratedClassifierCV for probabilities
+    base_svm = LinearSVC(random_state=42, max_iter=1000, dual=False,verbose=True)
+    calibrated_svm = CalibratedClassifierCV(base_svm, cv=3)
+    
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer(
+            max_features=2000,  # Reduced features
+            min_df=3,
+            max_df=0.7,
+            stop_words='english'
+        )),
+        ('classifier', calibrated_svm)
+    ])
+    
+    print("Training Fast Linear SVM...")
+    start_time = time.time()
+    pipeline.fit(train_df['content'], train_df['sender'])
+    training_time = time.time() - start_time
+    
+    print(f"✓ Fast SVM completed in {training_time:.2f} seconds")
+    
+    # Evaluate
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print(f"✅ Accuracy: {accuracy:.4f}")
+    
+    if save:
+        metadata_extras = {'training_time': training_time}
+        save_model(pipeline, SVM_MODEL_FILE, "fast_svm", accuracy, train_df, metadata_extras)
+    
+    return pipeline
+
+def build_random_forest_classifier(train_df, test_df, save=True):
+    """Build and evaluate a Random Forest classifier."""
+    # Display dataset information
+    print("=== Random Forest Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Forest configuration: 100 trees with parallel processing")
+    
+    # Create a pipeline with TF-IDF and Random Forest
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer(
+            max_features=5000,
+            min_df=2,
+            max_df=0.8,
+            stop_words='english'
+        )),
+        ('classifier', RandomForestClassifier(
+            n_estimators=100, 
+            random_state=42, 
+            n_jobs=-1,
+            verbose=1  # Enable verbose output
+        ))
+    ])
+    
+    # Train the model
+    print("\n=== Training Random Forest ===")
+    print("Building 100 decision trees in parallel...")
+    start_time = time.time()
+    pipeline.fit(train_df['content'], train_df['sender'])
+    training_time = time.time() - start_time
+    print(f"✓ Random Forest training completed in {training_time:.2f} seconds")
+    
+    # Evaluate the model
+    print("\n=== Random Forest Model Evaluation ===")
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print(f"✅ Accuracy: {accuracy:.4f}")
+    
+    # Print detailed classification report
+    print("\nClassification Report:")
+    print(classification_report(test_df['sender'], y_pred))
+    
+    # Save the model if requested
+    if save:
+        metadata_extras = {'training_time': training_time}
+        save_model(pipeline, RANDOM_FOREST_MODEL_FILE, "random_forest", accuracy, train_df, metadata_extras)
+    
+    return pipeline
+
+def build_logistic_regression_classifier(train_df, test_df, save=True):
+    """Build and evaluate a Logistic Regression classifier."""
+    # Display dataset information
+    print("=== Logistic Regression Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Max iterations: 1000 (with parallel processing)")
+    
+    # Create a pipeline with TF-IDF and Logistic Regression
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer(
+            max_features=5000,
+            min_df=2,
+            max_df=0.8,
+            stop_words='english'
+        )),
+        ('classifier', LogisticRegression(
+            max_iter=1000, 
+            random_state=42, 
+            n_jobs=-1,
+            verbose=1  # Enable verbose output
+        ))
+    ])
+    
+    # Train the model
+    print("\n=== Training Logistic Regression ===")
+    print("Optimizing coefficients using L-BFGS solver...")
+    start_time = time.time()
+    pipeline.fit(train_df['content'], train_df['sender'])
+    training_time = time.time() - start_time
+    print(f"✓ Logistic Regression training completed in {training_time:.2f} seconds")
+    
+    # Evaluate the model
+    print("\n=== Logistic Regression Model Evaluation ===")
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print(f"✅ Accuracy: {accuracy:.4f}")
+    
+    # Print detailed classification report
+    print("\nClassification Report:")
+    print(classification_report(test_df['sender'], y_pred))
+    
+    # Save the model if requested
+    if save:
+        metadata_extras = {'training_time': training_time}
+        save_model(pipeline, LOGISTIC_REGRESSION_MODEL_FILE, "logistic_regression", accuracy, train_df, metadata_extras)
+    
+    return pipeline
+
+def build_neural_network_classifier(train_df, test_df, save=True):
+    """Build and evaluate a Neural Network (MLP) classifier."""
+    # Display dataset information
+    print("=== Neural Network Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Architecture: Input -> TF-IDF(5000) -> Hidden(100,50) -> Output({len(train_df['sender'].unique())})")
+    
+    # Create a pipeline with TF-IDF and Multi-layer Perceptron
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer(
+            max_features=5000,
+            min_df=2,
+            max_df=0.8,
+            stop_words='english'
+        )),
+        ('classifier', MLPClassifier(
+            hidden_layer_sizes=(100, 50),
+            max_iter=500,
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.1,
+            n_iter_no_change=10,
+            verbose=True  # Enable verbose output for training progress
+        ))
+    ])
+    
+    # Train the model
+    print("\n=== Starting Neural Network Training ===")
+    print("Training with early stopping enabled...")
+    print("Convergence progress will be shown below:")
+    print("-" * 50)
+    
+    start_time = time.time()
+    pipeline.fit(train_df['content'], train_df['sender'])
+    training_time = time.time() - start_time
+    
+    print(f"\n{'='*50}")
+    print(f"✓ Neural Network training completed!")
+    print(f"⏱️  Training time: {training_time:.2f} seconds")
+    
+    # Get training info from the classifier
+    mlp_classifier = pipeline.named_steps['classifier']
+    print(f"🔄 Training iterations: {mlp_classifier.n_iter_}")
+    print(f"📉 Final loss: {mlp_classifier.loss_:.6f}")
+    print(f"{'='*50}")
+    
+    # Evaluate the model
+    print("\n=== Neural Network Model Evaluation ===")
+    y_pred = pipeline.predict(test_df['content'])
+    accuracy = accuracy_score(test_df['sender'], y_pred)
+    print(f"✅ Accuracy: {accuracy:.4f}")
+    
+    # Print detailed classification report
+    print("\nClassification Report:")
+    print(classification_report(test_df['sender'], y_pred))
+    
+    # Save the model if requested
+    if save:
+        metadata_extras = {
+            'training_time': training_time,
+            'n_iterations': int(mlp_classifier.n_iter_),
+            'final_loss': float(mlp_classifier.loss_),
+            'hidden_layers': mlp_classifier.hidden_layer_sizes
+        }
+        save_model(pipeline, NEURAL_NETWORK_MODEL_FILE, "neural_network", accuracy, train_df, metadata_extras)
     
     return pipeline
 
@@ -277,9 +577,18 @@ def optimize_hyperparameters(train_df, test_df, save=True):
     }
     
     # Perform grid search
-    print("Optimizing hyperparameters...")
+    print("\n=== Hyperparameter Optimization ===")
+    print("Testing combinations of parameters:")
+    print("  • max_features: [3000, 5000]")
+    print("  • min_df: [2, 3]") 
+    print("  • max_df: [0.7, 0.8]")
+    print("  • alpha: [0.01, 0.1, 1.0]")
+    print(f"Total combinations: {len(param_grid['vectorizer__max_features']) * len(param_grid['vectorizer__min_df']) * len(param_grid['vectorizer__max_df']) * len(param_grid['classifier__alpha'])}")
+    print("Progress will be shown below...")
+    print("-" * 50)
+    
     start_time = time.time()
-    grid_search = GridSearchCV(pipeline, param_grid, cv=3, n_jobs=-1, verbose=1)
+    grid_search = GridSearchCV(pipeline, param_grid, cv=3, n_jobs=-1, verbose=2)  # Increased verbose level
     grid_search.fit(X_train, y_train)
     training_time = time.time() - start_time
     
@@ -824,8 +1133,81 @@ def show_split_info():
         test_count = test_df[test_df['sender'] == sender].shape[0]
         print(f"  - {sender}: {count} train, {test_count} test")
 
+def train_all_models(emails_df):
+    """Train all classifier models."""
+    # Get or create train/test split
+    train_df, test_df = get_or_create_train_test_split(emails_df)
+    
+    print("\n" + "="*80)
+    print("🚀 TRAINING ALL CLASSIFIER MODELS")
+    print("="*80)
+    print(f"📊 Dataset Summary:")
+    print(f"   • Training samples: {len(train_df):,}")
+    print(f"   • Testing samples: {len(test_df):,}")
+    print(f"   • Unique senders: {len(train_df['sender'].unique())}")
+    print(f"   • Total training time estimate: 10-30 minutes (depending on hardware)")
+    print("="*80)
+    
+    models = {}
+    total_models = 6  # Total number of models to train
+    model_times = {}
+    overall_start_time = time.time()
+    
+    # Train baseline Naive Bayes model
+    print(f"\n[1/{total_models}] 🧠 Training Baseline Naive Bayes Model")
+    start_time = time.time()
+    models['naive_bayes'] = build_naive_bayes_classifier(train_df, test_df)
+    model_times['naive_bayes'] = time.time() - start_time
+    
+    # Train SVM model (usually the slowest)
+    print(f"\n[2/{total_models}] ⚡ Training SVM Model (This will take the longest)")
+    start_time = time.time()
+    models['svm'] = build_fast_svm_classifier(train_df, test_df)
+    model_times['svm'] = time.time() - start_time
+    
+    # Train Random Forest model
+    print(f"\n[3/{total_models}] 🌲 Training Random Forest Model")
+    start_time = time.time()
+    models['random_forest'] = build_random_forest_classifier(train_df, test_df)
+    model_times['random_forest'] = time.time() - start_time
+    
+    # Train Logistic Regression model
+    print(f"\n[4/{total_models}] 📈 Training Logistic Regression Model")
+    start_time = time.time()
+    models['logistic_regression'] = build_logistic_regression_classifier(train_df, test_df)
+    model_times['logistic_regression'] = time.time() - start_time
+    
+    # Train Neural Network model
+    print(f"\n[5/{total_models}] 🧪 Training Neural Network Model")
+    start_time = time.time()
+    models['neural_network'] = build_neural_network_classifier(train_df, test_df)
+    model_times['neural_network'] = time.time() - start_time
+    
+    # Optimize hyperparameters (optional, can be time-consuming)
+    print(f"\n[6/{total_models}] 🔧 Optimizing Hyperparameters for Naive Bayes")
+    start_time = time.time()
+    models['optimized_naive_bayes'] = optimize_hyperparameters(train_df, test_df)
+    model_times['optimized_naive_bayes'] = time.time() - start_time
+    
+    # Training summary
+    total_time = time.time() - overall_start_time
+    print("\n" + "="*80)
+    print("🎉 ALL MODELS TRAINING COMPLETED!")
+    print("="*80)
+    print(f"⏱️  Total training time: {total_time:.2f} seconds ({total_time/60:.1f} minutes)")
+    print("\n📊 Individual model training times:")
+    for model_name, training_time in model_times.items():
+        percentage = (training_time / total_time) * 100
+        print(f"   • {model_name.replace('_', ' ').title()}: {training_time:.2f}s ({percentage:.1f}%)")
+    
+    print(f"\n✅ Successfully trained {len(models)} models!")
+    print("💡 Use option 6 from the main menu to compare all models.")
+    print("="*80)
+    
+    return models
+
 def train_models(emails_df):
-    """Train both baseline and optimized models."""
+    """Train both baseline and optimized models (legacy function for backward compatibility)."""
     # Get or create train/test split
     train_df, test_df = get_or_create_train_test_split(emails_df)
     
@@ -838,6 +1220,713 @@ def train_models(emails_df):
     optimized_model = optimize_hyperparameters(train_df, test_df)
     
     return baseline_model, optimized_model
+
+def load_all_models():
+    """Load all trained models."""
+    models = {}
+    model_files = {
+        'naive_bayes': BASELINE_MODEL_FILE,
+        'optimized_naive_bayes': OPTIMIZED_MODEL_FILE,
+        'svm': SVM_MODEL_FILE,
+        'random_forest': RANDOM_FOREST_MODEL_FILE,
+        'logistic_regression': LOGISTIC_REGRESSION_MODEL_FILE,
+        'neural_network': NEURAL_NETWORK_MODEL_FILE
+    }
+    
+    for name, filepath in model_files.items():
+        model = load_model(filepath)
+        if model is not None:
+            models[name] = model
+            print(f"Loaded {name.replace('_', ' ').title()} model")
+    
+    return models
+
+def compare_all_models():
+    """Compare performance of all trained models."""
+    print("\n" + "="*60)
+    print("COMPARING ALL CLASSIFIER MODELS")
+    print("="*60)
+    
+    # Load data
+    train_df = pd.read_csv(TRAIN_DATA_FILE)
+    test_df = pd.read_csv(TEST_DATA_FILE)
+    
+    # Load all available models
+    models = load_all_models()
+    
+    if not models:
+        print("No trained models found.")
+        return None
+    
+    # Evaluate each model
+    all_results = {}
+    for name, model in models.items():
+        try:
+            results, y_true, y_pred, y_proba = evaluate_model_comprehensive(
+                model, test_df, name.replace('_', ' ').title())
+            all_results[name] = results
+        except Exception as e:
+            print(f"Error evaluating {name}: {e}")
+    
+    if all_results:
+        # Create comparison summary
+        print("\n" + "="*80)
+        print("MODEL COMPARISON SUMMARY")
+        print("="*80)
+        
+        # Create comparison DataFrame
+        comparison_data = []
+        for name, results in all_results.items():
+            comparison_data.append({
+                'Model': name.replace('_', ' ').title(),
+                'Accuracy': f"{results['accuracy']:.4f}",
+                'F1-Score (Weighted)': f"{results['f1_weighted']:.4f}",
+                'F1-Score (Macro)': f"{results['f1_macro']:.4f}",
+                'Precision (Weighted)': f"{results['precision_weighted']:.4f}",
+                'Recall (Weighted)': f"{results['recall_weighted']:.4f}"
+            })
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        print(comparison_df.to_string(index=False))
+        
+        # Find best performing models
+        best_accuracy = max(all_results.values(), key=lambda x: x['accuracy'])
+        best_f1_weighted = max(all_results.values(), key=lambda x: x['f1_weighted'])
+        best_f1_macro = max(all_results.values(), key=lambda x: x['f1_macro'])
+        
+        print(f"\nBest Accuracy: {best_accuracy['model_name']} ({best_accuracy['accuracy']:.4f})")
+        print(f"Best F1-Score (Weighted): {best_f1_weighted['model_name']} ({best_f1_weighted['f1_weighted']:.4f})")
+        print(f"Best F1-Score (Macro): {best_f1_macro['model_name']} ({best_f1_macro['f1_macro']:.4f})")
+        
+        # Create comprehensive visualization dashboard
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        
+        # Get model metadata for training time comparison
+        model_metadata = get_model_metadata()
+        
+        if VISUALIZATION_AVAILABLE:
+            print("\n🎨 Creating comprehensive visualization dashboard...")
+            generated_plots = create_model_performance_dashboard(
+                all_results, models, test_df, model_metadata, RESULTS_DIR
+            )
+            print(f"✅ Generated {len(generated_plots)} visualization plots!")
+        
+        # Export results
+        csv_path = os.path.join(RESULTS_DIR, f"all_models_comparison_{timestamp}.csv")
+        comparison_df.to_csv(csv_path, index=False)
+        print(f"\nComparison results saved to: {csv_path}")
+        
+        # Export detailed results
+        detailed_results = {
+            'evaluation_timestamp': timestamp,
+            'dataset_info': {
+                'train_samples': len(train_df),
+                'test_samples': len(test_df),
+                'num_classes': len(train_df['sender'].unique()),
+                'top_senders': train_df['sender'].value_counts().head(10).to_dict()
+            },
+            'model_results': all_results,
+            'best_models': {
+                'best_accuracy': best_accuracy['model_name'],
+                'best_f1_weighted': best_f1_weighted['model_name'],
+                'best_f1_macro': best_f1_macro['model_name']
+            }
+        }
+        
+        json_path = os.path.join(RESULTS_DIR, f"all_models_detailed_{timestamp}.json")
+        with open(json_path, 'w') as f:
+            json.dump(detailed_results, f, indent=2, default=str)
+        print(f"Detailed results saved to: {json_path}")
+        
+        # Print summary of generated visualizations
+        if VISUALIZATION_AVAILABLE and 'generated_plots' in locals():
+            print(f"\n📊 VISUALIZATION SUMMARY:")
+            for i, plot_path in enumerate(generated_plots, 1):
+                plot_name = os.path.basename(plot_path).replace(f"_{timestamp}.png", "").replace("0" + str(i) + "_", "").replace("_", " ").title()
+                print(f"  {i}. {plot_name}: {plot_path}")
+        else:
+            print(f"\n📊 No visualizations generated (matplotlib/seaborn not available)")
+    
+    return all_results
+
+def create_multi_model_comparison_plot(all_results, save_path=None):
+    """Create a comprehensive comparison plot for multiple models."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping multi-model comparison plot.")
+        return None
+    
+    if not all_results:
+        print("No results to plot.")
+        return None
+        
+    # Prepare data for plotting
+    models = list(all_results.keys())
+    model_names = [name.replace('_', ' ').title() for name in models]
+    
+    metrics = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted', 'f1_macro']
+    metric_names = ['Accuracy', 'Precision (Weighted)', 'Recall (Weighted)', 'F1-Score (Weighted)', 'F1-Score (Macro)']
+    
+    # Create subplot for each metric
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle('Comprehensive Model Performance Comparison', fontsize=16, fontweight='bold')
+    
+    # Flatten axes for easier iteration
+    axes_flat = axes.flatten()
+    
+    for i, (metric, metric_name) in enumerate(zip(metrics, metric_names)):
+        ax = axes_flat[i]
+        
+        values = [all_results[model][metric] for model in models]
+        colors = plt.cm.Set3(np.linspace(0, 1, len(models)))
+        
+        bars = ax.bar(range(len(models)), values, color=colors, alpha=0.8)
+        ax.set_xlabel('Models')
+        ax.set_ylabel('Score')
+        ax.set_title(metric_name)
+        ax.set_xticks(range(len(models)))
+        ax.set_xticklabels(model_names, rotation=45, ha='right')
+        ax.set_ylim(0, 1)
+        
+        # Add value labels on bars
+        for bar, value in zip(bars, values):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                   f'{value:.3f}', ha='center', va='bottom', fontsize=9)
+    
+    # Create overall ranking plot in the last subplot
+    ax = axes_flat[5]
+    
+    # Calculate average performance across all metrics
+    avg_scores = []
+    for model in models:
+        avg_score = np.mean([all_results[model][metric] for metric in metrics])
+        avg_scores.append(avg_score)
+    
+    # Sort models by average score
+    sorted_data = sorted(zip(model_names, avg_scores), key=lambda x: x[1], reverse=True)
+    sorted_names, sorted_scores = zip(*sorted_data)
+    
+    colors = plt.cm.viridis(np.linspace(0, 1, len(sorted_names)))
+    bars = ax.bar(range(len(sorted_names)), sorted_scores, color=colors, alpha=0.8)
+    ax.set_xlabel('Models')
+    ax.set_ylabel('Average Score')
+    ax.set_title('Overall Model Ranking (Average Score)')
+    ax.set_xticks(range(len(sorted_names)))
+    ax.set_xticklabels(sorted_names, rotation=45, ha='right')
+    ax.set_ylim(0, 1)
+    
+    # Add value labels
+    for i, (bar, score) in enumerate(zip(bars, sorted_scores)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+               f'{score:.3f}\n(#{i+1})', ha='center', va='bottom', fontsize=9)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Multi-model comparison plot saved to {save_path}")
+    
+    return plt
+
+def create_confusion_matrix_comparison(all_results, test_df, models, save_path=None):
+    """Create confusion matrix comparison for all models."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping confusion matrix comparison.")
+        return None
+    
+    n_models = len(models)
+    if n_models == 0:
+        return None
+    
+    # Calculate grid size
+    cols = min(3, n_models)
+    rows = (n_models + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 4*rows))
+    fig.suptitle('Confusion Matrix Comparison Across Models', fontsize=16, fontweight='bold')
+    
+    # Flatten axes for easier iteration
+    if n_models == 1:
+        axes = [axes]
+    elif rows == 1:
+        axes = axes if n_models > 1 else [axes]
+    else:
+        axes = axes.flatten()
+    
+    unique_senders = sorted(test_df['sender'].unique())
+    
+    for i, (model_name, model) in enumerate(models.items()):
+        if i >= len(axes):
+            break
+            
+        ax = axes[i]
+        
+        # Get predictions
+        y_true = test_df['sender']
+        y_pred = model.predict(test_df['content'])
+        
+        # Create confusion matrix
+        cm = confusion_matrix(y_true, y_pred, labels=unique_senders)
+        
+        # Normalize confusion matrix
+        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        
+        # Create heatmap
+        im = ax.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues)
+        ax.set_title(f'{model_name.replace("_", " ").title()}')
+        
+        # Only show labels for first few classes to avoid clutter
+        if len(unique_senders) <= 20:
+            tick_marks = np.arange(len(unique_senders))
+            ax.set_xticks(tick_marks)
+            ax.set_yticks(tick_marks)
+            ax.set_xticklabels(unique_senders, rotation=45, ha='right')
+            ax.set_yticklabels(unique_senders)
+        else:
+            ax.set_xlabel('Predicted Label')
+            ax.set_ylabel('True Label')
+        
+        # Add colorbar
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    
+    # Hide empty subplots
+    for j in range(i + 1, len(axes)):
+        axes[j].set_visible(False)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Confusion matrix comparison saved to {save_path}")
+    
+    return plt
+
+def create_training_time_comparison(model_metadata, save_path=None):
+    """Create training time comparison visualization."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping training time comparison.")
+        return None
+    
+    if not model_metadata:
+        print("No model metadata available for training time comparison.")
+        return None
+    
+    # Extract training times
+    models_with_time = {}
+    for model_name, metadata in model_metadata.items():
+        if 'training_time' in metadata:
+            models_with_time[model_name] = metadata['training_time']
+    
+    if not models_with_time:
+        print("No training time data available.")
+        return None
+    
+    # Sort by training time
+    sorted_models = sorted(models_with_time.items(), key=lambda x: x[1])
+    model_names, training_times = zip(*sorted_models)
+    
+    # Convert to readable format
+    model_display_names = [name.replace('_', ' ').title() for name in model_names]
+    time_minutes = [time/60 for time in training_times]
+    
+    # Create horizontal bar chart
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Color gradient based on training time
+    colors = plt.cm.RdYlBu_r(np.linspace(0.2, 0.8, len(model_names)))
+    bars = ax.barh(range(len(model_names)), time_minutes, color=colors, alpha=0.8)
+    
+    ax.set_yticks(range(len(model_names)))
+    ax.set_yticklabels(model_display_names)
+    ax.set_xlabel('Training Time (minutes)')
+    ax.set_title('Model Training Time Comparison', fontsize=14, fontweight='bold')
+    
+    # Add value labels on bars
+    for i, (bar, time_min, time_sec) in enumerate(zip(bars, time_minutes, training_times)):
+        width = bar.get_width()
+        if time_sec < 60:
+            label = f'{time_sec:.1f}s'
+        else:
+            label = f'{time_min:.1f}m'
+        ax.text(width + max(time_minutes) * 0.01, bar.get_y() + bar.get_height()/2,
+                label, ha='left', va='center', fontweight='bold')
+    
+    # Add grid
+    ax.grid(axis='x', alpha=0.3, linestyle='--')
+    ax.set_axisbelow(True)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Training time comparison saved to {save_path}")
+    
+    return plt
+
+def create_radar_chart_comparison(all_results, save_path=None):
+    """Create radar chart comparison of model performance."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping radar chart comparison.")
+        return None
+    
+    if not all_results:
+        return None
+    
+    # Metrics for radar chart
+    metrics = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted', 'f1_macro']
+    metric_labels = ['Accuracy', 'Precision', 'Recall', 'F1-Weighted', 'F1-Macro']
+    
+    # Number of metrics
+    N = len(metrics)
+    
+    # Compute angle for each metric
+    angles = [n / float(N) * 2 * np.pi for n in range(N)]
+    angles += angles[:1]  # Complete the circle
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
+    fig.suptitle('Model Performance Radar Chart Comparison', fontsize=16, fontweight='bold', y=0.98)
+    
+    # Colors for different models
+    colors = plt.cm.Set1(np.linspace(0, 1, len(all_results)))
+    
+    # Plot each model
+    for i, (model_name, results) in enumerate(all_results.items()):
+        values = [results[metric] for metric in metrics]
+        values += values[:1]  # Complete the circle
+        
+        model_display_name = model_name.replace('_', ' ').title()
+        ax.plot(angles, values, 'o-', linewidth=2, label=model_display_name, color=colors[i])
+        ax.fill(angles, values, alpha=0.1, color=colors[i])
+    
+    # Add metric labels
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metric_labels)
+    ax.set_ylim(0, 1)
+    
+    # Add legend
+    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0))
+    
+    # Add grid lines
+    ax.grid(True)
+    ax.set_rticks([0.2, 0.4, 0.6, 0.8, 1.0])
+    ax.set_rlabel_position(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Radar chart comparison saved to {save_path}")
+    
+    return plt
+
+def create_performance_distribution_plot(all_results, save_path=None):
+    """Create distribution plots showing performance spread across metrics."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping performance distribution plot.")
+        return None
+    
+    if not all_results:
+        return None
+    
+    metrics = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted', 'f1_macro']
+    metric_labels = ['Accuracy', 'Precision (Weighted)', 'Recall (Weighted)', 'F1-Score (Weighted)', 'F1-Score (Macro)']
+    
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle('Performance Distribution Analysis Across Models', fontsize=16, fontweight='bold')
+    axes_flat = axes.flatten()
+    
+    # Box plot for each metric
+    for i, (metric, metric_label) in enumerate(zip(metrics, metric_labels)):
+        ax = axes_flat[i]
+        
+        # Collect values for this metric across all models
+        model_names = []
+        values = []
+        
+        for model_name, results in all_results.items():
+            model_names.append(model_name.replace('_', ' ').title())
+            values.append(results[metric])
+        
+        # Create box plot (even though we have single values, this shows distribution)
+        bp = ax.boxplot([values], patch_artist=True, labels=['All Models'])
+        bp['boxes'][0].set_facecolor('lightblue')
+        bp['boxes'][0].set_alpha(0.7)
+        
+        # Overlay individual points
+        y_pos = np.ones(len(values))
+        colors = plt.cm.Set3(np.linspace(0, 1, len(values)))
+        scatter = ax.scatter(y_pos, values, c=colors, s=100, alpha=0.8, edgecolors='black', linewidth=1)
+        
+        # Add model labels
+        for j, (name, value) in enumerate(zip(model_names, values)):
+            ax.annotate(name, (1, value), xytext=(1.1, value), 
+                       fontsize=9, ha='left', va='center')
+        
+        ax.set_title(metric_label)
+        ax.set_ylabel('Score')
+        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+    
+    # Performance summary in the last subplot
+    ax = axes_flat[5]
+    
+    # Calculate overall rankings
+    model_rankings = {}
+    for model_name in all_results.keys():
+        total_score = sum(all_results[model_name][metric] for metric in metrics)
+        model_rankings[model_name] = total_score / len(metrics)
+    
+    # Sort by ranking
+    sorted_rankings = sorted(model_rankings.items(), key=lambda x: x[1], reverse=True)
+    names, scores = zip(*sorted_rankings)
+    
+    display_names = [name.replace('_', ' ').title() for name in names]
+    colors = plt.cm.viridis(np.linspace(0, 1, len(names)))
+    
+    bars = ax.bar(range(len(names)), scores, color=colors, alpha=0.8)
+    ax.set_xlabel('Models')
+    ax.set_ylabel('Average Score')
+    ax.set_title('Overall Model Ranking')
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(display_names, rotation=45, ha='right')
+    
+    # Add value labels and rankings
+    for i, (bar, score) in enumerate(zip(bars, scores)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+               f'{score:.3f}\n#{i+1}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Performance distribution plot saved to {save_path}")
+    
+    return plt
+
+def create_metric_correlation_heatmap(all_results, save_path=None):
+    """Create correlation heatmap between different performance metrics."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping metric correlation heatmap.")
+        return None
+    
+    if not all_results:
+        return None
+    
+    # Extract metrics data
+    metrics = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted', 'f1_macro']
+    metric_labels = ['Accuracy', 'Precision', 'Recall', 'F1-Weighted', 'F1-Macro']
+    
+    # Create DataFrame with all metrics
+    data = []
+    model_names = []
+    for model_name, results in all_results.items():
+        row = [results[metric] for metric in metrics]
+        data.append(row)
+        model_names.append(model_name.replace('_', ' ').title())
+    
+    df = pd.DataFrame(data, columns=metric_labels, index=model_names)
+    
+    # Check if we have enough data points for meaningful correlation
+    if len(data) < 3:
+        print(f"Warning: Only {len(data)} models available. Correlation analysis needs at least 3 data points.")
+        print("Creating a simplified metric comparison instead...")
+        
+        # Create a simple comparison plot instead
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # Left plot: Metric values by model
+        df_transposed = df.T
+        im1 = ax1.imshow(df_transposed.values, cmap='viridis', aspect='auto')
+        ax1.set_xticks(range(len(model_names)))
+        ax1.set_yticks(range(len(metric_labels)))
+        ax1.set_xticklabels(model_names, rotation=45, ha='right')
+        ax1.set_yticklabels(metric_labels)
+        ax1.set_title('Model Performance Across Metrics', fontweight='bold')
+        
+        # Add values to cells
+        for i in range(len(metric_labels)):
+            for j in range(len(model_names)):
+                text = ax1.text(j, i, f'{df_transposed.iloc[i, j]:.3f}',
+                               ha="center", va="center", color="white", fontweight='bold')
+        
+        plt.colorbar(im1, ax=ax1, label='Performance Score')
+        
+        # Right plot: Metric comparison bar chart
+        metric_means = df.mean()
+        metric_stds = df.std()
+        
+        bars = ax2.bar(range(len(metric_labels)), metric_means, 
+                      yerr=metric_stds, capsize=5, alpha=0.7, 
+                      color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+        ax2.set_xticks(range(len(metric_labels)))
+        ax2.set_xticklabels(metric_labels, rotation=45, ha='right')
+        ax2.set_ylabel('Average Performance Score')
+        ax2.set_title('Average Performance by Metric (with std dev)', fontweight='bold')
+        ax2.set_ylim(0, 1)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, mean_val, std_val in zip(bars, metric_means, metric_stds):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + std_val + 0.01,
+                    f'{mean_val:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+    else:
+        # Calculate correlation matrix
+        correlation_matrix = df.corr()
+        
+        # Create side-by-side plots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+        
+        # Left plot: Correlation heatmap
+        # Use a better colormap with proper scaling
+        mask = np.triu(np.ones_like(correlation_matrix, dtype=bool), k=1)  # Mask upper triangle
+        
+        if 'sns' in globals():
+            sns.heatmap(correlation_matrix, mask=mask, annot=True, fmt='.2f', 
+                       cmap='RdBu_r', center=0, vmin=-1, vmax=1,
+                       square=True, ax=ax1, cbar_kws={"shrink": .8})
+        else:
+            # Manual heatmap without seaborn
+            masked_corr = correlation_matrix.copy()
+            masked_corr[mask] = np.nan  # Set upper triangle to NaN
+            
+            im1 = ax1.imshow(masked_corr, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
+            ax1.set_xticks(range(len(metric_labels)))
+            ax1.set_yticks(range(len(metric_labels)))
+            ax1.set_xticklabels(metric_labels, rotation=45, ha='right')
+            ax1.set_yticklabels(metric_labels)
+            
+            # Add correlation values to visible cells
+            for i in range(len(metric_labels)):
+                for j in range(len(metric_labels)):
+                    if not mask[i, j]:  # Only show lower triangle
+                        value = correlation_matrix.iloc[i, j]
+                        color = 'white' if abs(value) > 0.5 else 'black'
+                        ax1.text(j, i, f'{value:.2f}', ha="center", va="center", 
+                               color=color, fontweight='bold')
+            
+            plt.colorbar(im1, ax=ax1, label='Correlation Coefficient')
+        
+        ax1.set_title('Metric Correlation Matrix\n(Lower Triangle Only)', fontweight='bold')
+        
+        # Right plot: Scatter plot matrix for most correlated metrics
+        # Find the pair with highest absolute correlation (excluding diagonal)
+        corr_copy = correlation_matrix.copy()
+        np.fill_diagonal(corr_copy.values, 0)  # Remove diagonal
+        max_corr_idx = np.unravel_index(np.argmax(np.abs(corr_copy.values)), corr_copy.shape)
+        metric1, metric2 = metric_labels[max_corr_idx[0]], metric_labels[max_corr_idx[1]]
+        
+        x_vals = df[metric1]
+        y_vals = df[metric2]
+        
+        # Create scatter plot
+        colors = plt.cm.Set1(np.linspace(0, 1, len(model_names)))
+        for i, (x, y, name) in enumerate(zip(x_vals, y_vals, model_names)):
+            ax2.scatter(x, y, c=[colors[i]], s=100, alpha=0.7, edgecolors='black')
+            ax2.annotate(name, (x, y), xytext=(5, 5), textcoords='offset points', 
+                        fontsize=9, alpha=0.8)
+        
+        # Add trend line
+        z = np.polyfit(x_vals, y_vals, 1)
+        p = np.poly1d(z)
+        x_trend = np.linspace(min(x_vals), max(x_vals), 100)
+        ax2.plot(x_trend, p(x_trend), 'r--', alpha=0.8, linewidth=2)
+        
+        ax2.set_xlabel(metric1)
+        ax2.set_ylabel(metric2)
+        ax2.set_title(f'Highest Correlation: {metric1} vs {metric2}\n(r = {corr_copy.iloc[max_corr_idx]:.3f})', 
+                     fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xlim(0, 1)
+        ax2.set_ylim(0, 1)
+    
+    plt.suptitle('Performance Metrics Analysis Dashboard', fontsize=16, fontweight='bold', y=0.98)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Metric analysis dashboard saved to {save_path}")
+    
+    return plt
+
+def create_model_performance_dashboard(all_results, models, test_df, model_metadata=None, save_dir=None):
+    """Create a comprehensive dashboard with multiple visualizations."""
+    if not VISUALIZATION_AVAILABLE:
+        print("Visualization libraries not available. Skipping performance dashboard.")
+        return []
+    
+    if not all_results:
+        print("No results available for dashboard creation.")
+        return []
+    
+    if save_dir is None:
+        save_dir = RESULTS_DIR
+    
+    os.makedirs(save_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    generated_plots = []
+    
+    print("\n🎨 Creating comprehensive visualization dashboard...")
+    
+    # 1. Multi-model comparison (existing)
+    print("📊 Generating multi-model comparison chart...")
+    plot_path = os.path.join(save_dir, f"01_multi_model_comparison_{timestamp}.png")
+    plt_obj = create_multi_model_comparison_plot(all_results, plot_path)
+    if plt_obj:
+        plt_obj.close()
+        generated_plots.append(plot_path)
+    
+    # 2. Confusion matrix comparison
+    print("🔍 Generating confusion matrix comparison...")
+    plot_path = os.path.join(save_dir, f"02_confusion_matrix_comparison_{timestamp}.png")
+    plt_obj = create_confusion_matrix_comparison(all_results, test_df, models, plot_path)
+    if plt_obj:
+        plt_obj.close()
+        generated_plots.append(plot_path)
+    
+    # 3. Training time comparison
+    if model_metadata:
+        print("⏱️ Generating training time comparison...")
+        plot_path = os.path.join(save_dir, f"03_training_time_comparison_{timestamp}.png")
+        plt_obj = create_training_time_comparison(model_metadata, plot_path)
+        if plt_obj:
+            plt_obj.close()
+            generated_plots.append(plot_path)
+    
+    # 4. Radar chart comparison
+    print("🕸️ Generating radar chart comparison...")
+    plot_path = os.path.join(save_dir, f"04_radar_chart_comparison_{timestamp}.png")
+    plt_obj = create_radar_chart_comparison(all_results, plot_path)
+    if plt_obj:
+        plt_obj.close()
+        generated_plots.append(plot_path)
+    
+    # 5. Performance distribution plot
+    print("📈 Generating performance distribution analysis...")
+    plot_path = os.path.join(save_dir, f"05_performance_distribution_{timestamp}.png")
+    plt_obj = create_performance_distribution_plot(all_results, plot_path)
+    if plt_obj:
+        plt_obj.close()
+        generated_plots.append(plot_path)
+    
+    # 6. Metric correlation heatmap
+    print("📊 Generating metrics analysis dashboard...")
+    plot_path = os.path.join(save_dir, f"06_metrics_analysis_dashboard_{timestamp}.png")
+    plt_obj = create_metric_correlation_heatmap(all_results, plot_path)
+    if plt_obj:
+        plt_obj.close()
+        generated_plots.append(plot_path)
+    
+    print(f"\n✅ Dashboard generation completed! Generated {len(generated_plots)} visualizations.")
+    print(f"📁 All plots saved in: {save_dir}")
+    
+    return generated_plots
 
 def main():
     # Check if running in a virtual environment
@@ -873,9 +1962,22 @@ def main():
         # Ask if user wants to use saved models
         print("\nFound previously trained models.")
         if has_saved_splits:
-            choice = input("Would you like to (1) use saved models, (2) retrain models with existing split, (3) recreate split and retrain, or (4) generate evaluation report? Enter 1, 2, 3, or 4: ")
+            choice = input("Would you like to:\n"
+                          "(1) use saved models\n"
+                          "(2) retrain models with existing split\n"
+                          "(3) recreate split and retrain\n"
+                          "(4) generate evaluation report\n"
+                          "(5) train all classifier types\n"
+                          "(6) compare all trained models\n"
+                          "Enter 1, 2, 3, 4, 5, or 6: ")
         else:
-            choice = input("Would you like to (1) use saved models, (2) retrain models, or (3) generate evaluation report? Enter 1, 2, or 3: ")
+            choice = input("Would you like to:\n"
+                          "(1) use saved models\n"
+                          "(2) retrain models\n"
+                          "(3) generate evaluation report\n"
+                          "(4) train all classifier types\n"
+                          "(5) compare all trained models\n"
+                          "Enter 1, 2, 3, 4, or 5: ")
         
         if choice == '4' or (choice == '3' and not has_saved_splits):
             # Generate comprehensive evaluation report
@@ -887,6 +1989,36 @@ def main():
                     return
                 
                 # Load data and models for interactive testing
+                emails_df = process_emails(maildir_path)
+                optimized_model = load_model(OPTIMIZED_MODEL_FILE)
+            else:
+                return
+        elif choice == '5' or (choice == '4' and not has_saved_splits):
+            # Train all classifier types
+            print(f"Using existing maildir data at: {maildir_path}")
+            emails_df = process_emails(maildir_path)
+            all_models = train_all_models(emails_df)
+            
+            # Use the best performing model for interactive testing
+            print("\nTraining completed! You can now use option 6 to compare all models.")
+            response = input("Would you like to compare all models now? (y/n): ")
+            if response.lower() == 'y':
+                compare_all_models()
+            
+            # Use optimized naive bayes for interactive testing
+            optimized_model = all_models.get('optimized_naive_bayes', all_models.get('naive_bayes'))
+            emails_df = process_emails(maildir_path)
+            
+        elif choice == '6' or (choice == '5' and not has_saved_splits):
+            # Compare all trained models
+            results = compare_all_models()
+            if results:
+                print("\nModel comparison completed!")
+                response = input("Would you like to continue with interactive testing? (y/n): ")
+                if response.lower() != 'y':
+                    return
+                
+                # Load data and use best model for testing
                 emails_df = process_emails(maildir_path)
                 optimized_model = load_model(OPTIMIZED_MODEL_FILE)
             else:

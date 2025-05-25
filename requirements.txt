@@ -5,3 +5,4 @@ scikit-learn==1.4.0
 matplotlib==3.8.2  # For visualization
 seaborn==0.13.0    # For enhanced visualizations
 joblib==1.3.2      # For model persistence
+psutil==5.9.6      # For memory monitoring during training

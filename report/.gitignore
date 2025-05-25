@@ -1,0 +1,65 @@
+# LaTeX auxiliary and output files
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+*.out
+*.nav
+*.snm
+*.vrb
+*.lof
+*.lot
+*.listing
+*.idx
+*.ind
+*.ilg
+*.glo
+*.gls
+*.glg
+*.xdy
+*.log
+*.bcf
+*.run.xml
+*.figlist
+*.makefile
+*.fls_latexmk
+
+# Generated PDF files (uncomment if you don't want to track PDFs)
+# *.pdf
+
+# Word documents (all generated versions)
+*.docx
+*.doc
+
+# HTML intermediate files
+*.html
+
+# Temporary conversion files
+*_temp.tex
+*_converted.*
+
+# Microsoft Office temporary files
+~$*.docx
+~$*.doc
+~$*.xlsx
+~$*.pptx
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# macOS
+.DS_Store
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+
+# Conversion scripts output logs
+conversion.log
+pandoc.log
