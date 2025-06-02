@@ -3,6 +3,7 @@ maildir/*
 processed_emails.csv
 test_data.csv
 train_data.csv
+validation_data.csv
 results/*
 
 # Models and checkpoints
@@ -23,6 +24,7 @@ env/
 .env
 .venv
 venv/
+simple_env/
 ENV/
 env.bak/
 venv.bak/

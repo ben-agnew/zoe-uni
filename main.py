@@ -11,7 +11,7 @@ For macOS/Linux:
    
 For Windows:
 1. Create a virtual environment: python -m venv env
-2. Activate the environment: env\Scripts\activate
+2. Activate the environment: env\\Scripts\\activate
 3. Install dependencies: pip install -r requirements.txt
 4. Run the script: python main.py
 
@@ -81,6 +81,7 @@ if VISUALIZATION_AVAILABLE:
 DATA_DIR = "enron_data"
 PROCESSED_DATA_FILE = "processed_emails.csv"
 TRAIN_DATA_FILE = "train_data.csv"
+VALIDATION_DATA_FILE = "validation_data.csv"
 TEST_DATA_FILE = "test_data.csv"
 NUM_TOP_USERS = 150  # Number of unique users to include
 MODEL_DIR = "models"  # Directory to store models
@@ -141,55 +142,78 @@ def process_emails(maildir_path):
         user_dir = os.path.join(maildir_path, user)
         if not os.path.isdir(user_dir):
             continue
-            
-        # Process sent emails to identify the sender
-        sent_dir = os.path.join(user_dir, "sent")
-        if os.path.exists(sent_dir) and os.path.isdir(sent_dir):
-            for file_name in os.listdir(sent_dir):
-                file_path = os.path.join(sent_dir, file_name)
-                if os.path.isfile(file_path):
-                    content = extract_email_content(file_path)
-                    if content:
-                        emails_data.append({
-                            'sender': user,
-                            'content': content,
-                            'path': file_path
-                        })
         
-        # Also check sent_items directory
-        sent_items_dir = os.path.join(user_dir, "sent_items")
-        if os.path.exists(sent_items_dir) and os.path.isdir(sent_items_dir):
-            for file_name in os.listdir(sent_items_dir):
-                file_path = os.path.join(sent_items_dir, file_name)
-                if os.path.isfile(file_path):
-                    content = extract_email_content(file_path)
-                    if content:
-                        emails_data.append({
-                            'sender': user,
-                            'content': content,
-                            'path': file_path
-                        })
+        print(f"Processing user: {user}")
+        user_emails = []
+        
+        # List of sent directories to check
+        sent_directories = ["sent", "sent_items", "_sent_mail"]
+        
+        for sent_dir_name in sent_directories:
+            sent_dir = os.path.join(user_dir, sent_dir_name)
+            if os.path.exists(sent_dir) and os.path.isdir(sent_dir):
+                print(f"  Found {sent_dir_name} directory for {user}")
+                for file_name in os.listdir(sent_dir):
+                    file_path = os.path.join(sent_dir, file_name)
+                    if os.path.isfile(file_path):
+                        content = extract_email_content(file_path)
+                        if content and content.strip():  # Ensure content is not empty
+                            user_emails.append({
+                                'sender': user,
+                                'content': content,
+                                'path': file_path
+                            })
+        
+        # Only include users with at least 20 emails
+        if len(user_emails) >= 20:
+            print(f"  Added {len(user_emails)} emails for user {user}")
+            emails_data.extend(user_emails)
+        else:
+            print(f"  Skipped user {user} (only {len(user_emails)} emails, minimum required: 20)")
     
-    # Create DataFrame and save processed data
+    # Create DataFrame
     df = pd.DataFrame(emails_data)
+    print(f"Initial dataset: {len(df)} emails from {len(df['sender'].unique())} users")
+    
+    # Remove duplicate emails based on content
+    print("Removing duplicate emails...")
+    initial_count = len(df)
+    df = df.drop_duplicates(subset=['content'], keep='first')
+    duplicates_removed = initial_count - len(df)
+    print(f"Removed {duplicates_removed} duplicate emails")
+    
+    # Verify users still have at least 20 emails after duplicate removal
+    print("Verifying users still meet minimum email requirement after duplicate removal...")
+    user_counts = df['sender'].value_counts()
+    users_to_remove = user_counts[user_counts < 20].index.tolist()
+    
+    if users_to_remove:
+        print(f"Removing {len(users_to_remove)} users who now have less than 20 emails after duplicate removal")
+        df = df[~df['sender'].isin(users_to_remove)]
     
     # Filter to include only top NUM_TOP_USERS users by email count
-    top_users = df['sender'].value_counts().head(NUM_TOP_USERS).index.tolist()
+    final_user_counts = df['sender'].value_counts()
+    top_users = final_user_counts.head(NUM_TOP_USERS).index.tolist()
     df = df[df['sender'].isin(top_users)]
     
     # Save processed data
     df.to_csv(PROCESSED_DATA_FILE, index=False)
     print(f"Processed data saved to {PROCESSED_DATA_FILE}")
-    print(f"Dataset contains {len(df)} emails from {len(df['sender'].unique())} unique senders")
+    print(f"Final dataset contains {len(df)} emails from {len(df['sender'].unique())} unique senders")
+    print(f"Email count per user after processing:")
+    final_counts = df['sender'].value_counts()
+    print(f"  Min emails per user: {final_counts.min()}")
+    print(f"  Max emails per user: {final_counts.max()}")
+    print(f"  Average emails per user: {final_counts.mean():.1f}")
     
     return df
 
-def create_and_save_train_test_split(emails_df, test_size=0.2, random_state=42):
-    """Create and save train/test splits."""
-    print("Creating and saving train/test splits...")
+def create_and_save_train_test_split(emails_df, test_size=0.2, validation_size=0.15, random_state=42):
+    """Create and save train/validation/test splits."""
+    print("Creating and saving train/validation/test splits...")
     
-    # Split data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(
+    # First split: separate test set
+    X_temp, X_test, y_temp, y_test = train_test_split(
         emails_df['content'], 
         emails_df['sender'],
         test_size=test_size, 
@@ -197,10 +221,27 @@ def create_and_save_train_test_split(emails_df, test_size=0.2, random_state=42):
         stratify=emails_df['sender']
     )
     
-    # Create DataFrames for train and test sets
+    # Second split: separate validation from remaining data
+    # Calculate validation size relative to the remaining data
+    val_size_adjusted = validation_size / (1 - test_size)
+    
+    X_train, X_validation, y_train, y_validation = train_test_split(
+        X_temp,
+        y_temp,
+        test_size=val_size_adjusted,
+        random_state=random_state,
+        stratify=y_temp
+    )
+    
+    # Create DataFrames for train, validation, and test sets
     train_df = pd.DataFrame({
         'content': X_train,
         'sender': y_train
+    })
+    
+    validation_df = pd.DataFrame({
+        'content': X_validation,
+        'sender': y_validation
     })
     
     test_df = pd.DataFrame({
@@ -210,52 +251,58 @@ def create_and_save_train_test_split(emails_df, test_size=0.2, random_state=42):
     
     # Save the splits
     train_df.to_csv(TRAIN_DATA_FILE, index=False)
+    validation_df.to_csv(VALIDATION_DATA_FILE, index=False)
     test_df.to_csv(TEST_DATA_FILE, index=False)
     
-    print(f"Train data saved to {TRAIN_DATA_FILE} ({len(train_df)} samples)")
-    print(f"Test data saved to {TEST_DATA_FILE} ({len(test_df)} samples)")
+    print(f"Train data saved to {TRAIN_DATA_FILE} ({len(train_df)} samples, {len(train_df)/len(emails_df)*100:.1f}%)")
+    print(f"Validation data saved to {VALIDATION_DATA_FILE} ({len(validation_df)} samples, {len(validation_df)/len(emails_df)*100:.1f}%)")
+    print(f"Test data saved to {TEST_DATA_FILE} ({len(test_df)} samples, {len(test_df)/len(emails_df)*100:.1f}%)")
     
-    return train_df, test_df
+    return train_df, validation_df, test_df
 
 def load_train_test_split():
-    """Load existing train/test splits."""
-    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
-        return None, None
+    """Load existing train/validation/test splits."""
+    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(VALIDATION_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
+        return None, None, None
     
-    print(f"Loading train/test splits from saved files...")
+    print(f"Loading train/validation/test splits from saved files...")
     train_df = pd.read_csv(TRAIN_DATA_FILE)
+    validation_df = pd.read_csv(VALIDATION_DATA_FILE)
     test_df = pd.read_csv(TEST_DATA_FILE)
     
     print(f"Loaded train data: {len(train_df)} samples")
+    print(f"Loaded validation data: {len(validation_df)} samples")
     print(f"Loaded test data: {len(test_df)} samples")
     
-    return train_df, test_df
+    return train_df, validation_df, test_df
 
 def get_or_create_train_test_split(emails_df):
-    """Get existing train/test split or create new one if it doesn't exist."""
-    train_df, test_df = load_train_test_split()
+    """Get existing train/validation/test split or create new one if it doesn't exist."""
+    train_df, validation_df, test_df = load_train_test_split()
     
-    if train_df is None or test_df is None:
-        print("No existing train/test split found. Creating new split...")
-        train_df, test_df = create_and_save_train_test_split(emails_df)
+    if train_df is None or validation_df is None or test_df is None:
+        print("No existing train/validation/test split found. Creating new split...")
+        train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
     else:
-        print("Using existing train/test split.")
+        print("Using existing train/validation/test split.")
         # Verify that the split is still valid for the current dataset
         expected_total = len(emails_df)
-        actual_total = len(train_df) + len(test_df)
+        actual_total = len(train_df) + len(validation_df) + len(test_df)
         
         if abs(expected_total - actual_total) > 100:  # Allow some tolerance
-            print(f"Warning: Train/test split size ({actual_total}) doesn't match current dataset ({expected_total})")
-            print("Creating new train/test split...")
-            train_df, test_df = create_and_save_train_test_split(emails_df)
+            print(f"Warning: Train/validation/test split size ({actual_total}) doesn't match current dataset ({expected_total})")
+            print("Creating new train/validation/test split...")
+            train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
     
-    return train_df, test_df
+    return train_df, validation_df, test_df
 
-def build_naive_bayes_classifier(train_df, test_df, save=True):
+def build_naive_bayes_classifier(train_df, validation_df, test_df, save=True):
     """Build and evaluate a Naive Bayes classifier."""
     # Display dataset information
     print("=== Naive Bayes Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
     print(f"Algorithm: Multinomial Naive Bayes (fast training)")
     
     # Create a pipeline with TF-IDF and Multinomial Naive Bayes
@@ -277,25 +324,35 @@ def build_naive_bayes_classifier(train_df, test_df, save=True):
     training_time = time.time() - start_time
     print(f"✓ Naive Bayes training completed in {training_time:.2f} seconds")
     
-    # Evaluate the model
-    print("\n=== Naive Bayes Model Evaluation ===")
-    y_pred = pipeline.predict(test_df['content'])
-    accuracy = accuracy_score(test_df['sender'], y_pred)
-    print(f"✅ Accuracy: {accuracy:.4f}")
+    # Evaluate on validation set
+    print("\n=== Validation Set Evaluation ===")
+    y_val_pred = pipeline.predict(validation_df['content'])
+    val_accuracy = accuracy_score(validation_df['sender'], y_val_pred)
+    print(f"📊 Validation Accuracy: {val_accuracy:.4f}")
     
-    # Print detailed classification report
-    print("\nClassification Report:")
-    print(classification_report(test_df['sender'], y_pred))
+    # Evaluate on test set
+    print("\n=== Test Set Evaluation ===")
+    y_test_pred = pipeline.predict(test_df['content'])
+    test_accuracy = accuracy_score(test_df['sender'], y_test_pred)
+    print(f"✅ Test Accuracy: {test_accuracy:.4f}")
+    
+    # Print detailed classification report for test set
+    print("\nTest Set Classification Report:")
+    print(classification_report(test_df['sender'], y_test_pred))
     
     # Save the model if requested
     if save:
-        # Add training time to metadata
-        metadata_extras = {'training_time': training_time}
-        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", accuracy, train_df, metadata_extras)
+        # Add training time and validation accuracy to metadata
+        metadata_extras = {
+            'training_time': training_time,
+            'validation_accuracy': val_accuracy,
+            'test_accuracy': test_accuracy
+        }
+        save_model(pipeline, BASELINE_MODEL_FILE, "baseline", test_accuracy, train_df, metadata_extras)
     
     return pipeline
 
-def build_lstm_classifier(train_df, test_df, save=True):
+def build_lstm_classifier(train_df, validation_df, test_df, save=True):
     """Build and evaluate an LSTM classifier."""
     if not TENSORFLOW_AVAILABLE:
         print("Error: TensorFlow not available. Please install TensorFlow to use LSTM classifier.")
@@ -305,6 +362,7 @@ def build_lstm_classifier(train_df, test_df, save=True):
     # Display dataset information
     print("=== LSTM Classifier Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
     print(f"Testing samples: {len(test_df):,}")
     print(f"Number of unique senders: {len(train_df['sender'].unique())}")
     print(f"Average email length: {train_df['content'].str.len().mean():.0f} characters")
@@ -312,15 +370,19 @@ def build_lstm_classifier(train_df, test_df, save=True):
     # Prepare data
     print("\n=== Preparing Data for LSTM ===")
     X_train = train_df['content'].values
+    X_validation = validation_df['content'].values
     X_test = test_df['content'].values
     y_train = train_df['sender'].values
+    y_validation = validation_df['sender'].values
     y_test = test_df['sender'].values
     
     # Encode labels
     label_encoder = LabelEncoder()
     y_train_encoded = label_encoder.fit_transform(y_train)
+    y_validation_encoded = label_encoder.transform(y_validation)
     y_test_encoded = label_encoder.transform(y_test)
     y_train_categorical = to_categorical(y_train_encoded)
+    y_validation_categorical = to_categorical(y_validation_encoded)
     y_test_categorical = to_categorical(y_test_encoded)
     
     # Tokenize text
@@ -331,9 +393,11 @@ def build_lstm_classifier(train_df, test_df, save=True):
     tokenizer.fit_on_texts(X_train)
     
     X_train_seq = tokenizer.texts_to_sequences(X_train)
+    X_validation_seq = tokenizer.texts_to_sequences(X_validation)
     X_test_seq = tokenizer.texts_to_sequences(X_test)
     
     X_train_padded = pad_sequences(X_train_seq, maxlen=max_length, padding='post', truncating='post')
+    X_validation_padded = pad_sequences(X_validation_seq, maxlen=max_length, padding='post', truncating='post')
     X_test_padded = pad_sequences(X_test_seq, maxlen=max_length, padding='post', truncating='post')
     
     print(f"Vocabulary size: {len(tokenizer.word_index)}")
@@ -373,12 +437,12 @@ def build_lstm_classifier(train_df, test_df, save=True):
         restore_best_weights=True
     )
     
-    # Train with validation split
+    # Train with validation data
     history = model.fit(
         X_train_padded, y_train_categorical,
         batch_size=32,
         epochs=10,
-        validation_split=0.2,
+        validation_data=(X_validation_padded, y_validation_categorical),
         callbacks=[early_stopping],
         verbose=1
     )
@@ -440,13 +504,16 @@ def build_lstm_classifier(train_df, test_df, save=True):
     
     return wrapper
 
-def build_fast_lstm_classifier(train_df, test_df, save=True):
+def build_fast_lstm_classifier(train_df, validation_df, test_df, save=True):
     """Build a fast LSTM classifier with reduced complexity."""
     if not TENSORFLOW_AVAILABLE:
         print("Error: TensorFlow not available. Please install TensorFlow to use LSTM classifier.")
         return None
     
     print("=== Fast LSTM Training Setup ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
     
     # Prepare data with reduced parameters for faster training
     X_train = train_df['content'].values
@@ -536,11 +603,13 @@ def build_fast_lstm_classifier(train_df, test_df, save=True):
     
     return wrapper
 
-def build_random_forest_classifier(train_df, test_df, save=True):
+def build_random_forest_classifier(train_df, validation_df, test_df, save=True):
     """Build and evaluate a Random Forest classifier."""
     # Display dataset information
     print("=== Random Forest Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
     print(f"Forest configuration: 100 trees with parallel processing")
     
     # Create a pipeline with TF-IDF and Random Forest
@@ -584,11 +653,13 @@ def build_random_forest_classifier(train_df, test_df, save=True):
     
     return pipeline
 
-def build_logistic_regression_classifier(train_df, test_df, save=True):
+def build_logistic_regression_classifier(train_df, validation_df, test_df, save=True):
     """Build and evaluate a Logistic Regression classifier."""
     # Display dataset information
     print("=== Logistic Regression Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
     print(f"Max iterations: 1000 (with parallel processing)")
     
     # Create a pipeline with TF-IDF and Logistic Regression
@@ -632,11 +703,13 @@ def build_logistic_regression_classifier(train_df, test_df, save=True):
     
     return pipeline
 
-def build_neural_network_classifier(train_df, test_df, save=True):
+def build_neural_network_classifier(train_df, validation_df, test_df, save=True):
     """Build and evaluate a Neural Network (MLP) classifier."""
     # Display dataset information
     print("=== Neural Network Training Setup ===")
     print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
     print(f"Architecture: Input -> TF-IDF(5000) -> Hidden(100,50) -> Output({len(train_df['sender'].unique())})")
     
     # Create a pipeline with TF-IDF and Multi-layer Perceptron
@@ -700,62 +773,115 @@ def build_neural_network_classifier(train_df, test_df, save=True):
     
     return pipeline
 
-def optimize_hyperparameters(train_df, test_df, save=True):
-    """Optimize hyperparameters using GridSearchCV."""
+def optimize_hyperparameters(train_df, validation_df, test_df, save=True):
+    """Optimize hyperparameters using validation set."""
+    print("\n=== Hyperparameter Optimization ===")
+    print(f"Training samples: {len(train_df):,}")
+    print(f"Validation samples: {len(validation_df):,}")
+    print(f"Testing samples: {len(test_df):,}")
+    
     # Use the pre-split data
     X_train, y_train = train_df['content'], train_df['sender']
+    X_validation, y_validation = validation_df['content'], validation_df['sender']
     X_test, y_test = test_df['content'], test_df['sender']
-    
-    # Define pipeline
-    pipeline = Pipeline([
-        ('vectorizer', TfidfVectorizer()),
-        ('classifier', MultinomialNB())
-    ])
     
     # Define parameter grid
     param_grid = {
-        'vectorizer__max_features': [3000, 5000],
-        'vectorizer__min_df': [2, 3],
-        'vectorizer__max_df': [0.7, 0.8],
-        'classifier__alpha': [0.01, 0.1, 1.0],
+        'vectorizer__max_features': [3000, 5000, 7000],
+        'vectorizer__min_df': [2, 3, 5],
+        'vectorizer__max_df': [0.7, 0.8, 0.9],
+        'classifier__alpha': [0.01, 0.1, 1.0, 10.0],
     }
     
-    # Perform grid search
-    print("\n=== Hyperparameter Optimization ===")
     print("Testing combinations of parameters:")
-    print("  • max_features: [3000, 5000]")
-    print("  • min_df: [2, 3]") 
-    print("  • max_df: [0.7, 0.8]")
-    print("  • alpha: [0.01, 0.1, 1.0]")
+    print("  • max_features: [3000, 5000, 7000]")
+    print("  • min_df: [2, 3, 5]") 
+    print("  • max_df: [0.7, 0.8, 0.9]")
+    print("  • alpha: [0.01, 0.1, 1.0, 10.0]")
     print(f"Total combinations: {len(param_grid['vectorizer__max_features']) * len(param_grid['vectorizer__min_df']) * len(param_grid['vectorizer__max_df']) * len(param_grid['classifier__alpha'])}")
-    print("Progress will be shown below...")
+    print("Manual validation approach for better control...")
     print("-" * 50)
     
     start_time = time.time()
-    grid_search = GridSearchCV(pipeline, param_grid, cv=3, n_jobs=-1, verbose=2)  # Increased verbose level
-    grid_search.fit(X_train, y_train)
+    
+    best_accuracy = 0
+    best_params = {}
+    best_model = None
+    
+    total_combinations = (len(param_grid['vectorizer__max_features']) * 
+                         len(param_grid['vectorizer__min_df']) * 
+                         len(param_grid['vectorizer__max_df']) * 
+                         len(param_grid['classifier__alpha']))
+    
+    current_combination = 0
+    
+    # Manual grid search with validation set
+    for max_features in param_grid['vectorizer__max_features']:
+        for min_df in param_grid['vectorizer__min_df']:
+            for max_df in param_grid['vectorizer__max_df']:
+                for alpha in param_grid['classifier__alpha']:
+                    current_combination += 1
+                    
+                    # Create pipeline with current parameters
+                    pipeline = Pipeline([
+                        ('vectorizer', TfidfVectorizer(
+                            max_features=max_features,
+                            min_df=min_df,
+                            max_df=max_df,
+                            stop_words='english'
+                        )),
+                        ('classifier', MultinomialNB(alpha=alpha))
+                    ])
+                    
+                    # Train and evaluate
+                    pipeline.fit(X_train, y_train)
+                    y_val_pred = pipeline.predict(X_validation)
+                    val_accuracy = accuracy_score(y_validation, y_val_pred)
+                    
+                    print(f"[{current_combination}/{total_combinations}] "
+                          f"max_feat={max_features}, min_df={min_df}, max_df={max_df}, alpha={alpha} "
+                          f"→ Val Acc: {val_accuracy:.4f}")
+                    
+                    # Track best model
+                    if val_accuracy > best_accuracy:
+                        best_accuracy = val_accuracy
+                        best_params = {
+                            'vectorizer__max_features': max_features,
+                            'vectorizer__min_df': min_df,
+                            'vectorizer__max_df': max_df,
+                            'classifier__alpha': alpha
+                        }
+                        best_model = pipeline
+    
     training_time = time.time() - start_time
     
     # Print best parameters
-    print(f"Best parameters: {grid_search.best_params_}")
-    print(f"Best cross-validation score: {grid_search.best_score_:.4f}")
+    print(f"\n{'='*50}")
+    print(f"✓ Hyperparameter optimization completed!")
+    print(f"Best parameters: {best_params}")
+    print(f"Best validation accuracy: {best_accuracy:.4f}")
     print(f"Optimization completed in {training_time:.2f} seconds")
     
-    # Evaluate on test set
-    best_model = grid_search.best_estimator_
-    y_pred = best_model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"Test accuracy with optimized model: {accuracy:.4f}")
+    # Evaluate best model on test set (only once!)
+    print("\n=== Final Test Set Evaluation ===")
+    y_test_pred = best_model.predict(X_test)
+    test_accuracy = accuracy_score(y_test, y_test_pred)
+    print(f"🏆 Final test accuracy: {test_accuracy:.4f}")
+    
+    # Print detailed classification report for test set
+    print("\nTest Set Classification Report:")
+    print(classification_report(y_test, y_test_pred))
     
     # Save the model if requested
     if save:
         # Add training time and best parameters to metadata
         metadata_extras = {
             'training_time': training_time,
-            'best_parameters': grid_search.best_params_,
-            'best_cv_score': grid_search.best_score_
+            'best_parameters': best_params,
+            'best_validation_accuracy': best_accuracy,
+            'test_accuracy': test_accuracy
         }
-        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", accuracy, train_df, metadata_extras)
+        save_model(best_model, OPTIMIZED_MODEL_FILE, "optimized", test_accuracy, train_df, metadata_extras)
     
     return best_model
 
@@ -1351,37 +1477,42 @@ def show_model_info():
 print()
 
 def show_split_info():
-    """Display information about the train/test split."""
-    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
-        print("No train/test split files found.")
+    """Display information about the train/validation/test split."""
+    if not os.path.exists(TRAIN_DATA_FILE) or not os.path.exists(VALIDATION_DATA_FILE) or not os.path.exists(TEST_DATA_FILE):
+        print("No complete train/validation/test split files found.")
         return
     
     train_df = pd.read_csv(TRAIN_DATA_FILE)
+    validation_df = pd.read_csv(VALIDATION_DATA_FILE)
     test_df = pd.read_csv(TEST_DATA_FILE)
     
-    print("\n=== Train/Test Split Information ===")
-    print(f"Train set: {len(train_df)} samples")
-    print(f"Test set: {len(test_df)} samples")
-    print(f"Total: {len(train_df) + len(test_df)} samples")
-    print(f"Test ratio: {len(test_df) / (len(train_df) + len(test_df)):.1%}")
+    total_samples = len(train_df) + len(validation_df) + len(test_df)
+    
+    print("\n=== Train/Validation/Test Split Information ===")
+    print(f"Train set: {len(train_df)} samples ({len(train_df)/total_samples:.1%})")
+    print(f"Validation set: {len(validation_df)} samples ({len(validation_df)/total_samples:.1%})")
+    print(f"Test set: {len(test_df)} samples ({len(test_df)/total_samples:.1%})")
+    print(f"Total: {total_samples} samples")
     print(f"Unique senders: {len(train_df['sender'].unique())}")
     
     # Show distribution of top senders
     print("\nTop senders in training set:")
     for sender, count in train_df['sender'].value_counts().head(5).items():
+        validation_count = validation_df[validation_df['sender'] == sender].shape[0]
         test_count = test_df[test_df['sender'] == sender].shape[0]
-        print(f"  - {sender}: {count} train, {test_count} test")
+        print(f"  - {sender}: {count} train, {validation_count} validation, {test_count} test")
 
 def train_all_models(emails_df):
     """Train all classifier models."""
-    # Get or create train/test split
-    train_df, test_df = get_or_create_train_test_split(emails_df)
+    # Get or create train/validation/test split
+    train_df, validation_df, test_df = get_or_create_train_test_split(emails_df)
     
     print("\n" + "="*80)
     print("🚀 TRAINING ALL CLASSIFIER MODELS")
     print("="*80)
     print(f"📊 Dataset Summary:")
     print(f"   • Training samples: {len(train_df):,}")
+    print(f"   • Validation samples: {len(validation_df):,}")
     print(f"   • Testing samples: {len(test_df):,}")
     print(f"   • Unique senders: {len(train_df['sender'].unique())}")
     print(f"   • Total training time estimate: 10-30 minutes (depending on hardware)")
@@ -1395,37 +1526,37 @@ def train_all_models(emails_df):
     # Train baseline Naive Bayes model
     print(f"\n[1/{total_models}] 🧠 Training Baseline Naive Bayes Model")
     start_time = time.time()
-    models['naive_bayes'] = build_naive_bayes_classifier(train_df, test_df)
+    models['naive_bayes'] = build_naive_bayes_classifier(train_df, validation_df, test_df)
     model_times['naive_bayes'] = time.time() - start_time
     
     # Train LSTM model (replaces SVM)
     print(f"\n[2/{total_models}] 🧠 Training LSTM Model (This may take a while)")
     start_time = time.time()
-    models['lstm'] = build_fast_lstm_classifier(train_df, test_df)
+    models['lstm'] = build_fast_lstm_classifier(train_df, validation_df, test_df)
     model_times['lstm'] = time.time() - start_time
     
     # Train Random Forest model
     print(f"\n[3/{total_models}] 🌲 Training Random Forest Model")
     start_time = time.time()
-    models['random_forest'] = build_random_forest_classifier(train_df, test_df)
+    models['random_forest'] = build_random_forest_classifier(train_df, validation_df, test_df)
     model_times['random_forest'] = time.time() - start_time
     
     # Train Logistic Regression model
     print(f"\n[4/{total_models}] 📈 Training Logistic Regression Model")
     start_time = time.time()
-    models['logistic_regression'] = build_logistic_regression_classifier(train_df, test_df)
+    models['logistic_regression'] = build_logistic_regression_classifier(train_df, validation_df, test_df)
     model_times['logistic_regression'] = time.time() - start_time
     
     # Train Neural Network model
     print(f"\n[5/{total_models}] 🧪 Training Neural Network Model")
     start_time = time.time()
-    models['neural_network'] = build_neural_network_classifier(train_df, test_df)
+    models['neural_network'] = build_neural_network_classifier(train_df, validation_df, test_df)
     model_times['neural_network'] = time.time() - start_time
     
     # Optimize hyperparameters (optional, can be time-consuming)
     print(f"\n[6/{total_models}] 🔧 Optimizing Hyperparameters for Naive Bayes")
     start_time = time.time()
-    models['optimized_naive_bayes'] = optimize_hyperparameters(train_df, test_df)
+    models['optimized_naive_bayes'] = optimize_hyperparameters(train_df, validation_df, test_df)
     model_times['optimized_naive_bayes'] = time.time() - start_time
     
     # Training summary
@@ -1447,16 +1578,16 @@ def train_all_models(emails_df):
 
 def train_models(emails_df):
     """Train both baseline and optimized models (legacy function for backward compatibility)."""
-    # Get or create train/test split
-    train_df, test_df = get_or_create_train_test_split(emails_df)
+    # Get or create train/validation/test split
+    train_df, validation_df, test_df = get_or_create_train_test_split(emails_df)
     
     # Train baseline model
     print("\n=== Training Baseline Model ===")
-    baseline_model = build_naive_bayes_classifier(train_df, test_df)
+    baseline_model = build_naive_bayes_classifier(train_df, validation_df, test_df)
     
     # Optimize hyperparameters (optional, can be time-consuming)
     print("\n=== Optimizing Hyperparameters ===")
-    optimized_model = optimize_hyperparameters(train_df, test_df)
+    optimized_model = optimize_hyperparameters(train_df, validation_df, test_df)
     
     return baseline_model, optimized_model
 
@@ -1489,9 +1620,14 @@ def compare_all_models():
     print("COMPARING ALL CLASSIFIER MODELS")
     print("="*60)
     
-    # Load data
+    # Load data (we only need test data for evaluation, but load validation too for consistency)
     train_df = pd.read_csv(TRAIN_DATA_FILE)
+    validation_df = pd.read_csv(VALIDATION_DATA_FILE) if os.path.exists(VALIDATION_DATA_FILE) else None
     test_df = pd.read_csv(TEST_DATA_FILE)
+    
+    print(f"Loaded datasets: {len(train_df)} train, "
+          f"{len(validation_df) if validation_df is not None else 0} validation, "
+          f"{len(test_df)} test samples")
     
     # Load all available models
     models = load_all_models()
@@ -2191,7 +2327,9 @@ def main():
     
     # Check if models exist
     has_saved_models = os.path.exists(BASELINE_MODEL_FILE) and os.path.exists(OPTIMIZED_MODEL_FILE)
-    has_saved_splits = os.path.exists(TRAIN_DATA_FILE) and os.path.exists(TEST_DATA_FILE)
+    has_saved_splits = (os.path.exists(TRAIN_DATA_FILE) and 
+                       os.path.exists(VALIDATION_DATA_FILE) and 
+                       os.path.exists(TEST_DATA_FILE))
     
     if has_saved_models:
         # Display saved model information
@@ -2211,7 +2349,8 @@ def main():
                           "(4) generate evaluation report\n"
                           "(5) train all classifier types\n"
                           "(6) compare all trained models\n"
-                          "Enter 1, 2, 3, 4, 5, or 6: ")
+                          "(7) regenerate training/validation/testing data\n"
+                          "Enter 1, 2, 3, 4, 5, 6, or 7: ")
         else:
             choice = input("Would you like to:\n"
                           "(1) use saved models\n"
@@ -2219,7 +2358,8 @@ def main():
                           "(3) generate evaluation report\n"
                           "(4) train all classifier types\n"
                           "(5) compare all trained models\n"
-                          "Enter 1, 2, 3, 4, or 5: ")
+                          "(6) regenerate training/validation/testing data\n"
+                          "Enter 1, 2, 3, 4, 5, or 6: ")
         
         if choice == '4' or (choice == '3' and not has_saved_splits):
             # Generate comprehensive evaluation report
@@ -2265,6 +2405,49 @@ def main():
                 optimized_model = load_model(OPTIMIZED_MODEL_FILE)
             else:
                 return
+        elif choice == '7' or (choice == '6' and not has_saved_splits):
+            # Regenerate training/testing data
+            print(f"Regenerating training and testing data from maildir at: {maildir_path}")
+            
+            # Remove existing processed data to force reprocessing
+            if os.path.exists(PROCESSED_DATA_FILE):
+                os.remove(PROCESSED_DATA_FILE)
+                print(f"Removed existing processed data file: {PROCESSED_DATA_FILE}")
+            
+            # Remove existing split files
+            if os.path.exists(TRAIN_DATA_FILE):
+                os.remove(TRAIN_DATA_FILE)
+                print(f"Removed existing training data file: {TRAIN_DATA_FILE}")
+            
+            if os.path.exists(TEST_DATA_FILE):
+                os.remove(TEST_DATA_FILE)
+                print(f"Removed existing test data file: {TEST_DATA_FILE}")
+            
+            # Process emails with new logic (minimum 20 emails, check _sent_mail, remove duplicates)
+            print("\nProcessing emails with updated criteria:")
+            print("- Minimum 20 emails per user")
+            print("- Checking sent, sent_items, and _sent_mail directories")
+            print("- Removing duplicate emails")
+            print("- Filtering users after duplicate removal")
+            
+            emails_df = process_emails(maildir_path)
+            
+            # Create new train/test split
+            print("\nCreating new train/test split...")
+            train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
+            
+            print(f"\n✅ Data regeneration completed!")
+            print(f"📊 Final dataset: {len(emails_df)} emails from {len(emails_df['sender'].unique())} users")
+            print(f"📈 Training set: {len(train_df)} emails")
+            print(f"📊 Validation set: {len(validation_df)} emails")
+            print(f"📉 Test set: {len(test_df)} emails")
+            
+            response = input("\nWould you like to retrain models with the new data? (y/n): ")
+            if response.lower() == 'y':
+                baseline_model, optimized_model = train_models(emails_df)
+            else:
+                print("Data regeneration completed. You can now train models using the new data.")
+                return
         elif choice == '1':
             # Load emails dataset for sample prediction
             emails_df = process_emails(maildir_path)
@@ -2294,9 +2477,11 @@ def main():
             # Remove existing split files to force recreation
             if os.path.exists(TRAIN_DATA_FILE):
                 os.remove(TRAIN_DATA_FILE)
+            if os.path.exists(VALIDATION_DATA_FILE):
+                os.remove(VALIDATION_DATA_FILE)
             if os.path.exists(TEST_DATA_FILE):
                 os.remove(TEST_DATA_FILE)
-            print("Removed existing train/test split files.")
+            print("Removed existing train/validation/test split files.")
             
             baseline_model, optimized_model = train_models(emails_df)
         else:
@@ -2305,10 +2490,57 @@ def main():
             emails_df = process_emails(maildir_path)
             baseline_model, optimized_model = train_models(emails_df)
     else:
-        # No saved models found, process emails and train models
-        print(f"Using existing maildir data at: {maildir_path}")
-        emails_df = process_emails(maildir_path)
-        baseline_model, optimized_model = train_models(emails_df)
+        # No saved models found, ask user what they want to do
+        print(f"No saved models found. Available options:")
+        choice = input("Would you like to:\n"
+                      "(1) process emails and train models\n"
+                      "(2) regenerate training/testing data only\n"
+                      "Enter 1 or 2: ")
+        
+        if choice == '2':
+            # Regenerate training/testing data only
+            print(f"Regenerating training and testing data from maildir at: {maildir_path}")
+            
+            # Remove existing processed data to force reprocessing
+            if os.path.exists(PROCESSED_DATA_FILE):
+                os.remove(PROCESSED_DATA_FILE)
+                print(f"Removed existing processed data file: {PROCESSED_DATA_FILE}")
+            
+            # Remove existing split files
+            if os.path.exists(TRAIN_DATA_FILE):
+                os.remove(TRAIN_DATA_FILE)
+                print(f"Removed existing training data file: {TRAIN_DATA_FILE}")
+            
+            if os.path.exists(TEST_DATA_FILE):
+                os.remove(TEST_DATA_FILE)
+                print(f"Removed existing test data file: {TEST_DATA_FILE}")
+            
+            # Process emails with new logic
+            print("\nProcessing emails with updated criteria:")
+            print("- Minimum 20 emails per user")
+            print("- Checking sent, sent_items, and _sent_mail directories")
+            print("- Removing duplicate emails")
+            print("- Filtering users after duplicate removal")
+            
+            emails_df = process_emails(maildir_path)
+            
+            # Create new train/test split
+            print("\nCreating new train/test split...")
+            train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
+            
+            print(f"\n✅ Data regeneration completed!")
+            print(f"📊 Final dataset: {len(emails_df)} emails from {len(emails_df['sender'].unique())} users")
+            print(f"📈 Training set: {len(train_df)} emails")
+            print(f"📊 Validation set: {len(validation_df)} emails")
+            print(f"📉 Test set: {len(test_df)} emails")
+            
+            print("Data regeneration completed. Run the script again to train models with the new data.")
+            return
+        else:
+            # Process emails and train models (default behavior)
+            print(f"Using existing maildir data at: {maildir_path}")
+            emails_df = process_emails(maildir_path)
+            baseline_model, optimized_model = train_models(emails_df)
     
     # Example prediction
     print("\n=== Example Prediction ===")
