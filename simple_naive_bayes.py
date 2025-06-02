@@ -54,7 +54,7 @@ MIN_EMAILS_PER_USER = 20  # Minimum emails required per user
 
 
 def extract_email_content(email_path):
-    """Extract clean text content from an email file."""
+    """Extract clean text content from an email file, removing forwarded content."""
     try:
         with open(email_path, 'r', encoding='utf-8', errors='ignore') as file:
             # Parse the email
@@ -76,8 +76,7 @@ def extract_email_content(email_path):
             if not content:
                 return None
             
-            # Clean the content
-            # Remove email headers and metadata
+            # Clean the content line by line and stop at forwarded content
             lines = content.split('\n')
             cleaned_lines = []
             header_section = True
@@ -85,28 +84,37 @@ def extract_email_content(email_path):
             for line in lines:
                 line = line.strip()
                 
+                # Check if this line indicates forwarded content - if so, stop processing
+                if _is_forwarded_marker(line):
+                    break
+                
                 # Skip empty lines in header section
                 if header_section and not line:
                     continue
                 
+                # Enhanced header detection - check for email header patterns
+                is_header_line = _is_email_header_line(line)
+                
                 # Detect end of header section
-                if header_section and line and not any(line.startswith(prefix) for prefix in 
-                    ['From:', 'To:', 'Subject:', 'Date:', 'Cc:', 'Bcc:', 'Sent:', 'Received:']):
+                if header_section and line and not is_header_line:
                     header_section = False
                 
-                # Skip header lines
-                if header_section:
+                # Skip header lines (both in header section and scattered throughout)
+                if is_header_line:
                     continue
                 
-                # Skip forwarded message headers
-                if line.startswith('-----Original Message-----') or line.startswith('From:') or line.startswith('To:'):
+                # Skip quoted text (replies)
+                if line.startswith('>') or line.startswith('|'):
+                    continue
+                
+                # Skip lines that are mostly punctuation or special characters
+                if len(line) > 0 and len(re.sub(r'[^a-zA-Z0-9\s]', '', line)) / len(line) < 0.5:
                     continue
                 
                 # Clean the line
-                # Remove excessive whitespace
                 line = re.sub(r'\s+', ' ', line)
                 
-                if line:
+                if line and len(line) > 2:  # Skip very short lines
                     cleaned_lines.append(line)
             
             # Join lines and do final cleaning
@@ -121,6 +129,13 @@ def extract_email_content(email_path):
             # Remove phone numbers
             content = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '', content)
             
+            # Remove remaining header-like patterns that might have slipped through
+            # Pattern: "Word:" or "Word Word:" at the beginning of sentences
+            content = re.sub(r'\b[A-Za-z]{2,15}(?:\s+[A-Za-z]{2,15})?:\s*', '', content)
+            
+            # Remove patterns like "To: Name cc:" or "From: Name"
+            content = re.sub(r'\b(?:To|From|Cc|Bcc|Subject|Date|Sent|Received):\s*[^.!?]*?(?=\s|$)', '', content, flags=re.IGNORECASE)
+            
             # Remove excess whitespace
             content = re.sub(r'\s+', ' ', content).strip()
             
@@ -129,6 +144,114 @@ def extract_email_content(email_path):
     except Exception as e:
         print(f"Error processing {email_path}: {str(e)}")
         return None
+
+
+def _is_forwarded_marker(line):
+    """Check if a line indicates the start of forwarded content."""
+    line_lower = line.lower().strip()
+    
+    # Simple and fast checks for common forwarded email markers
+    forwarded_indicators = [
+        '-----original message-----',
+        'begin forwarded message',
+        'forwarded message',
+        '-----forwarded by',
+        'original message',
+        'forwarded by'
+    ]
+    
+    # Check if line starts with or contains these indicators
+    for indicator in forwarded_indicators:
+        if indicator in line_lower:
+            return True
+    
+    # Check for "From: ... Sent: ... To: ..." pattern (all on same line)
+    if line_lower.startswith('from:') and 'sent:' in line_lower and 'to:' in line_lower:
+        return True
+    
+    # Check for "On ... wrote:" pattern
+    if line_lower.startswith('on ') and 'wrote:' in line_lower:
+        return True
+    
+    return False
+
+
+def _is_email_header_line(line):
+    """Check if a line looks like an email header that should be filtered out."""
+    if not line:
+        return False
+    
+    line_lower = line.lower().strip()
+    
+    # Common email headers (case insensitive)
+    header_prefixes = [
+        'from:', 'to:', 'cc:', 'bcc:', 'subject:', 'date:', 'sent:', 'received:',
+        'reply-to:', 'return-path:', 'message-id:', 'in-reply-to:', 'references:',
+        'mime-version:', 'content-type:', 'content-transfer-encoding:',
+        'x-originating-ip:', 'x-mailer:', 'importance:', 'priority:',
+        'envelope-to:', 'delivery-date:', 'received-spf:'
+    ]
+    
+    # Check if line starts with any email header
+    for prefix in header_prefixes:
+        if line_lower.startswith(prefix):
+            return True
+    
+    # Check for standalone "cc:" or "bcc:" that might appear on their own line
+    if line_lower in ['cc:', 'bcc:', 'to:', 'from:']:
+        return True
+    
+    # Check for header-like patterns (word followed by colon and content)
+    # but be careful not to catch legitimate content
+    if ':' in line and len(line) < 100:  # Limit to reasonably short lines
+        parts = line.split(':', 1)
+        if len(parts) == 2:
+            header_part = parts[0].strip().lower()
+            # Check if it looks like a header (single word or two words max)
+            if (len(header_part.split()) <= 2 and 
+                not any(char.isdigit() for char in header_part) and  # No numbers
+                len(header_part) < 20):  # Reasonable header length
+                # Additional check: if it contains names that look like recipients
+                content_part = parts[1].strip()
+                if (any(word in content_part.lower() for word in ['@', 'enron.com']) or
+                    re.match(r'^[A-Za-z\s,.-]+$', content_part[:50])):  # Looks like names/emails
+                    return True
+    
+    return False
+
+
+def _check_if_forwarded(email_path):
+    """Check if an email file contains forwarded content with efficient partial reading."""
+    try:
+        with open(email_path, 'r', encoding='utf-8', errors='ignore') as file:
+            # Read only first 1500 characters to check for forwarded indicators
+            content = file.read(1500).lower()
+            
+            # Quick string-based checks (no regex for speed)
+            forwarded_indicators = [
+                '-----original message-----',
+                'begin forwarded message',
+                'forwarded message',
+                '-----forwarded by',
+                'original message',
+                'forwarded by'
+            ]
+            
+            for indicator in forwarded_indicators:
+                if indicator in content:
+                    return True
+            
+            # Simple checks without regex
+            if 'from:' in content and 'sent:' in content and 'to:' in content:
+                return True
+            
+            if 'wrote:' in content and ('on ' in content[:500]):  # Check 'on' in first 500 chars only
+                return True
+                
+            return False
+            
+    except Exception:
+        return False
 
 
 def create_dataset(maildir_path, force_recreate=False):
@@ -142,6 +265,9 @@ def create_dataset(maildir_path, force_recreate=False):
     emails_data = []
     total_users = 0
     processed_users = 0
+    total_email_files = 0
+    rejected_emails = 0
+    forwarded_emails_removed = 0
     
     # Process each user's emails
     for user in os.listdir(maildir_path):
@@ -152,6 +278,9 @@ def create_dataset(maildir_path, force_recreate=False):
         total_users += 1
         print(f"Processing user {total_users}: {user}")
         user_emails = []
+        user_total_files = 0
+        user_rejected = 0
+        user_forwarded = 0
         
         # Check for sent email directories
         sent_directories = ["sent", "sent_items", "_sent_mail"]
@@ -165,6 +294,15 @@ def create_dataset(maildir_path, force_recreate=False):
                 for file_name in os.listdir(sent_dir):
                     file_path = os.path.join(sent_dir, file_name)
                     if os.path.isfile(file_path):
+                        user_total_files += 1
+                        total_email_files += 1
+                        
+                        # Check if email contains forwarded content before processing
+                        contains_forwarded = _check_if_forwarded(file_path)
+                        if contains_forwarded:
+                            forwarded_emails_removed += 1
+                            user_forwarded += 1
+                        
                         content = extract_email_content(file_path)
                         if content and content.strip():
                             user_emails.append({
@@ -172,6 +310,12 @@ def create_dataset(maildir_path, force_recreate=False):
                                 'content': content,
                                 'file_path': file_path
                             })
+                        else:
+                            user_rejected += 1
+        
+        # Track total rejected emails
+        rejected_emails += user_rejected
+        print(f"  Processed {user_total_files} files, accepted {len(user_emails)}, forwarded {user_forwarded}, rejected {user_rejected}")
         
         # Only include users with sufficient emails
         if len(user_emails) >= MIN_EMAILS_PER_USER:
@@ -182,6 +326,11 @@ def create_dataset(maildir_path, force_recreate=False):
             print(f"  ✗ Skipped {user} (only {len(user_emails)} emails, minimum: {MIN_EMAILS_PER_USER})")
     
     print(f"\nProcessed {total_users} users, included {processed_users} users")
+    print(f"Email processing statistics:")
+    print(f"  Total email files processed: {total_email_files:,}")
+    print(f"  Emails with forwarded content: {forwarded_emails_removed:,} ({forwarded_emails_removed/total_email_files*100:.1f}%)")
+    print(f"  Emails rejected (too short/invalid): {rejected_emails:,} ({rejected_emails/total_email_files*100:.1f}%)")
+    print(f"  Emails accepted: {total_email_files - rejected_emails:,} ({(total_email_files - rejected_emails)/total_email_files*100:.1f}%)")
     
     # Create DataFrame
     df = pd.DataFrame(emails_data)

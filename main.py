@@ -84,6 +84,7 @@ TRAIN_DATA_FILE = "train_data.csv"
 VALIDATION_DATA_FILE = "validation_data.csv"
 TEST_DATA_FILE = "test_data.csv"
 NUM_TOP_USERS = 150  # Number of unique users to include
+MIN_EMAILS_PER_USER = 20  # Minimum emails required per user
 MODEL_DIR = "models"  # Directory to store models
 RESULTS_DIR = "results"  # Directory to store evaluation results
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_model.joblib")
@@ -95,38 +96,96 @@ NEURAL_NETWORK_MODEL_FILE = os.path.join(MODEL_DIR, "neural_network_model.joblib
 MODEL_METADATA_FILE = os.path.join(MODEL_DIR, "model_metadata.json")
 
 def extract_email_content(email_path):
-    """Extract the content from an email file."""
+    """Extract clean text content from an email file, removing forwarded content."""
     try:
-        with open(email_path, 'r', encoding='latin1') as f:
-            msg = email.message_from_file(f)
+        with open(email_path, 'r', encoding='utf-8', errors='ignore') as file:
+            # Parse the email
+            msg = email.message_from_file(file)
             
-        subject = msg.get('Subject', '')
-        body = ""
-        
-        if msg.is_multipart():
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                if content_type == 'text/plain':
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        body += payload.decode('latin1', errors='ignore')
-        else:
-            payload = msg.get_payload(decode=True)
-            if payload:
-                body = payload.decode('latin1', errors='ignore')
+            # Extract the body
+            if msg.is_multipart():
+                content = ""
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        content += part.get_payload(decode=True).decode('utf-8', errors='ignore')
+            else:
+                content = msg.get_payload(decode=True)
+                if content:
+                    content = content.decode('utf-8', errors='ignore')
+                else:
+                    content = str(msg.get_payload())
+            
+            if not content:
+                return None
+            
+            # Clean the content line by line and stop at forwarded content
+            lines = content.split('\n')
+            cleaned_lines = []
+            header_section = True
+            
+            for line in lines:
+                line = line.strip()
                 
-        # Combine subject and body
-        content = f"{subject} {body}"
-        
-        # Basic cleaning
-        content = re.sub(r'\s+', ' ', content)  # Remove extra whitespace
-        content = re.sub(r'[^\w\s]', '', content)  # Remove punctuation
-        content = content.lower()  # Convert to lowercase
-        
-        return content
+                # Check if this line indicates forwarded content - if so, stop processing
+                if _is_forwarded_marker(line):
+                    break
+                
+                # Skip empty lines in header section
+                if header_section and not line:
+                    continue
+                
+                # Enhanced header detection - check for email header patterns
+                is_header_line = _is_email_header_line(line)
+                
+                # Detect end of header section
+                if header_section and line and not is_header_line:
+                    header_section = False
+                
+                # Skip header lines (both in header section and scattered throughout)
+                if is_header_line:
+                    continue
+                
+                # Skip quoted text (replies)
+                if line.startswith('>') or line.startswith('|'):
+                    continue
+                
+                # Skip lines that are mostly punctuation or special characters
+                if len(line) > 0 and len(re.sub(r'[^a-zA-Z0-9\s]', '', line)) / len(line) < 0.5:
+                    continue
+                
+                # Clean the line
+                line = re.sub(r'\s+', ' ', line)
+                
+                if line and len(line) > 2:  # Skip very short lines
+                    cleaned_lines.append(line)
+            
+            # Join lines and do final cleaning
+            content = ' '.join(cleaned_lines)
+            
+            # Remove URLs
+            content = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', content)
+            
+            # Remove email addresses
+            content = re.sub(r'\S+@\S+', '', content)
+            
+            # Remove phone numbers
+            content = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '', content)
+            
+            # Remove remaining header-like patterns that might have slipped through
+            # Pattern: "Word:" or "Word Word:" at the beginning of sentences
+            content = re.sub(r'\b[A-Za-z]{2,15}(?:\s+[A-Za-z]{2,15})?:\s*', '', content)
+            
+            # Remove patterns like "To: Name cc:" or "From: Name"
+            content = re.sub(r'\b(?:To|From|Cc|Bcc|Subject|Date|Sent|Received):\s*[^.!?]*?(?=\s|$)', '', content, flags=re.IGNORECASE)
+            
+            # Remove excess whitespace
+            content = re.sub(r'\s+', ' ', content).strip()
+            
+            return content if len(content) > 50 else None  # Filter very short emails
+            
     except Exception as e:
-        print(f"Error processing {email_path}: {e}")
-        return ""
+        print(f"Error processing {email_path}: {str(e)}")
+        return None
 
 def process_emails(maildir_path):
     """Process all emails and create a DataFrame."""
@@ -134,77 +193,117 @@ def process_emails(maildir_path):
         print(f"Loading processed data from {PROCESSED_DATA_FILE}")
         return pd.read_csv(PROCESSED_DATA_FILE)
     
-    print(f"Processing emails from existing maildir at {maildir_path}...")
+    print(f"Creating dataset from maildir at: {maildir_path}")
     emails_data = []
+    total_users = 0
+    processed_users = 0
+    total_email_files = 0
+    rejected_emails = 0
+    forwarded_emails_removed = 0
     
-    # Walk through the maildir directory
+    # Process each user's emails
     for user in os.listdir(maildir_path):
         user_dir = os.path.join(maildir_path, user)
         if not os.path.isdir(user_dir):
             continue
         
-        print(f"Processing user: {user}")
+        total_users += 1
+        print(f"Processing user {total_users}: {user}")
         user_emails = []
+        user_total_files = 0
+        user_rejected = 0
+        user_forwarded = 0
         
-        # List of sent directories to check
+        # Check for sent email directories
         sent_directories = ["sent", "sent_items", "_sent_mail"]
         
         for sent_dir_name in sent_directories:
             sent_dir = os.path.join(user_dir, sent_dir_name)
             if os.path.exists(sent_dir) and os.path.isdir(sent_dir):
-                print(f"  Found {sent_dir_name} directory for {user}")
+                print(f"  Found {sent_dir_name} directory")
+                
+                # Process each email file
                 for file_name in os.listdir(sent_dir):
                     file_path = os.path.join(sent_dir, file_name)
                     if os.path.isfile(file_path):
+                        user_total_files += 1
+                        total_email_files += 1
+                        
+                        # Check if email contains forwarded content before processing
+                        contains_forwarded = _check_if_forwarded(file_path)
+                        if contains_forwarded:
+                            forwarded_emails_removed += 1
+                            user_forwarded += 1
+                        
                         content = extract_email_content(file_path)
-                        if content and content.strip():  # Ensure content is not empty
+                        if content and content.strip():
                             user_emails.append({
                                 'sender': user,
                                 'content': content,
-                                'path': file_path
+                                'file_path': file_path
                             })
+                        else:
+                            user_rejected += 1
         
-        # Only include users with at least 20 emails
-        if len(user_emails) >= 20:
-            print(f"  Added {len(user_emails)} emails for user {user}")
+        # Track total rejected emails
+        rejected_emails += user_rejected
+        print(f"  Processed {user_total_files} files, accepted {len(user_emails)}, forwarded {user_forwarded}, rejected {user_rejected}")
+        
+        # Only include users with sufficient emails
+        if len(user_emails) >= MIN_EMAILS_PER_USER:
+            print(f"  ✓ Added {len(user_emails)} emails for {user}")
             emails_data.extend(user_emails)
+            processed_users += 1
         else:
-            print(f"  Skipped user {user} (only {len(user_emails)} emails, minimum required: 20)")
+            print(f"  ✗ Skipped {user} (only {len(user_emails)} emails, minimum: {MIN_EMAILS_PER_USER})")
+    
+    print(f"\nProcessed {total_users} users, included {processed_users} users")
+    print(f"Email processing statistics:")
+    print(f"  Total email files processed: {total_email_files:,}")
+    print(f"  Emails with forwarded content: {forwarded_emails_removed:,} ({forwarded_emails_removed/total_email_files*100:.1f}%)")
+    print(f"  Emails rejected (too short/invalid): {rejected_emails:,} ({rejected_emails/total_email_files*100:.1f}%)")
+    print(f"  Emails accepted: {total_email_files - rejected_emails:,} ({(total_email_files - rejected_emails)/total_email_files*100:.1f}%)")
     
     # Create DataFrame
     df = pd.DataFrame(emails_data)
     print(f"Initial dataset: {len(df)} emails from {len(df['sender'].unique())} users")
     
-    # Remove duplicate emails based on content
+    # Remove duplicate emails
     print("Removing duplicate emails...")
     initial_count = len(df)
     df = df.drop_duplicates(subset=['content'], keep='first')
     duplicates_removed = initial_count - len(df)
     print(f"Removed {duplicates_removed} duplicate emails")
     
-    # Verify users still have at least 20 emails after duplicate removal
-    print("Verifying users still meet minimum email requirement after duplicate removal...")
+    # Verify users still meet minimum requirement after duplicate removal
     user_counts = df['sender'].value_counts()
-    users_to_remove = user_counts[user_counts < 20].index.tolist()
+    users_to_remove = user_counts[user_counts < MIN_EMAILS_PER_USER].index.tolist()
     
     if users_to_remove:
-        print(f"Removing {len(users_to_remove)} users who now have less than 20 emails after duplicate removal")
+        print(f"Removing {len(users_to_remove)} users who now have < {MIN_EMAILS_PER_USER} emails")
         df = df[~df['sender'].isin(users_to_remove)]
     
-    # Filter to include only top NUM_TOP_USERS users by email count
+    # Keep only top NUM_TOP_USERS by email count
     final_user_counts = df['sender'].value_counts()
     top_users = final_user_counts.head(NUM_TOP_USERS).index.tolist()
     df = df[df['sender'].isin(top_users)]
     
-    # Save processed data
+    # Remove file_path column (not needed for modeling)
+    df = df.drop('file_path', axis=1)
+    
+    # Save processed dataset
     df.to_csv(PROCESSED_DATA_FILE, index=False)
-    print(f"Processed data saved to {PROCESSED_DATA_FILE}")
-    print(f"Final dataset contains {len(df)} emails from {len(df['sender'].unique())} unique senders")
-    print(f"Email count per user after processing:")
-    final_counts = df['sender'].value_counts()
-    print(f"  Min emails per user: {final_counts.min()}")
-    print(f"  Max emails per user: {final_counts.max()}")
-    print(f"  Average emails per user: {final_counts.mean():.1f}")
+    print(f"\n✓ Dataset created and saved to {PROCESSED_DATA_FILE}")
+    print(f"Final dataset: {len(df)} emails from {len(df['sender'].unique())} unique senders")
+    
+    # Show dataset statistics
+    print(f"\nDataset Statistics:")
+    print(f"  Total emails: {len(df):,}")
+    print(f"  Unique senders: {len(df['sender'].unique())}")
+    print(f"  Min emails per sender: {final_user_counts.min()}")
+    print(f"  Max emails per sender: {final_user_counts.max()}")
+    print(f"  Average emails per sender: {final_user_counts.mean():.1f}")
+    print(f"  Median emails per sender: {final_user_counts.median():.1f}")
     
     return df
 
@@ -2306,258 +2405,109 @@ def create_model_performance_dashboard(all_results, models, test_df, model_metad
     
     return generated_plots
 
-def main():
-    # Check if running in a virtual environment
-    if not os.environ.get('VIRTUAL_ENV'):
-        print("Warning: It's recommended to run this script in a virtual environment.")
-        print("See the setup instructions at the top of this file.")
-        print("- On Windows: run setup.bat and then run.bat")
-        print("- On macOS/Linux: run ./setup.sh and then ./run.sh")
-        response = input("Do you want to continue anyway? (y/n): ")
-        if response.lower() != 'y':
-            print("Exiting. Please set up and activate a virtual environment before running again.")
-            return
+def _is_forwarded_marker(line):
+    """Check if a line indicates the start of forwarded content."""
+    line_lower = line.lower().strip()
     
-    # Use existing maildir path instead of downloading
-    maildir_path = os.path.join(os.getcwd(), "maildir")
-    if not os.path.exists(maildir_path):
-        print(f"Error: Could not find the maildir folder at {maildir_path}")
-        print("Please make sure the Enron email dataset 'maildir' folder exists in the current directory.")
-        return
+    # Simple and fast checks for common forwarded email markers
+    forwarded_indicators = [
+        '-----original message-----',
+        'begin forwarded message',
+        'forwarded message',
+        '-----forwarded by',
+        'original message',
+        'forwarded by'
+    ]
     
-    # Check if models exist
-    has_saved_models = os.path.exists(BASELINE_MODEL_FILE) and os.path.exists(OPTIMIZED_MODEL_FILE)
-    has_saved_splits = (os.path.exists(TRAIN_DATA_FILE) and 
-                       os.path.exists(VALIDATION_DATA_FILE) and 
-                       os.path.exists(TEST_DATA_FILE))
+    # Check if line starts with or contains these indicators
+    for indicator in forwarded_indicators:
+        if indicator in line_lower:
+            return True
     
-    if has_saved_models:
-        # Display saved model information
-        show_model_info()
-        
-        # Display train/test split information
-        if has_saved_splits:
-            show_split_info()
-        
-        # Ask if user wants to use saved models
-        print("\nFound previously trained models.")
-        if has_saved_splits:
-            choice = input("Would you like to:\n"
-                          "(1) use saved models\n"
-                          "(2) retrain models with existing split\n"
-                          "(3) recreate split and retrain\n"
-                          "(4) generate evaluation report\n"
-                          "(5) train all classifier types\n"
-                          "(6) compare all trained models\n"
-                          "(7) regenerate training/validation/testing data\n"
-                          "Enter 1, 2, 3, 4, 5, 6, or 7: ")
-        else:
-            choice = input("Would you like to:\n"
-                          "(1) use saved models\n"
-                          "(2) retrain models\n"
-                          "(3) generate evaluation report\n"
-                          "(4) train all classifier types\n"
-                          "(5) compare all trained models\n"
-                          "(6) regenerate training/validation/testing data\n"
-                          "Enter 1, 2, 3, 4, 5, or 6: ")
-        
-        if choice == '4' or (choice == '3' and not has_saved_splits):
-            # Generate comprehensive evaluation report
-            report_results = generate_comprehensive_report()
-            if report_results:
-                print("\nEvaluation report generated successfully!")
-                response = input("Would you like to continue with interactive testing? (y/n): ")
-                if response.lower() != 'y':
-                    return
-                
-                # Load data and models for interactive testing
-                emails_df = process_emails(maildir_path)
-                optimized_model = load_model(OPTIMIZED_MODEL_FILE)
-            else:
-                return
-        elif choice == '5' or (choice == '4' and not has_saved_splits):
-            # Train all classifier types
-            print(f"Using existing maildir data at: {maildir_path}")
-            emails_df = process_emails(maildir_path)
-            all_models = train_all_models(emails_df)
-            
-            # Use the best performing model for interactive testing
-            print("\nTraining completed! You can now use option 6 to compare all models.")
-            response = input("Would you like to compare all models now? (y/n): ")
-            if response.lower() == 'y':
-                compare_all_models()
-            
-            # Use optimized naive bayes for interactive testing
-            optimized_model = all_models.get('optimized_naive_bayes', all_models.get('naive_bayes'))
-            emails_df = process_emails(maildir_path)
-            
-        elif choice == '6' or (choice == '5' and not has_saved_splits):
-            # Compare all trained models
-            results = compare_all_models()
-            if results:
-                print("\nModel comparison completed!")
-                response = input("Would you like to continue with interactive testing? (y/n): ")
-                if response.lower() != 'y':
-                    return
-                
-                # Load data and use best model for testing
-                emails_df = process_emails(maildir_path)
-                optimized_model = load_model(OPTIMIZED_MODEL_FILE)
-            else:
-                return
-        elif choice == '7' or (choice == '6' and not has_saved_splits):
-            # Regenerate training/testing data
-            print(f"Regenerating training and testing data from maildir at: {maildir_path}")
-            
-            # Remove existing processed data to force reprocessing
-            if os.path.exists(PROCESSED_DATA_FILE):
-                os.remove(PROCESSED_DATA_FILE)
-                print(f"Removed existing processed data file: {PROCESSED_DATA_FILE}")
-            
-            # Remove existing split files
-            if os.path.exists(TRAIN_DATA_FILE):
-                os.remove(TRAIN_DATA_FILE)
-                print(f"Removed existing training data file: {TRAIN_DATA_FILE}")
-            
-            if os.path.exists(TEST_DATA_FILE):
-                os.remove(TEST_DATA_FILE)
-                print(f"Removed existing test data file: {TEST_DATA_FILE}")
-            
-            # Process emails with new logic (minimum 20 emails, check _sent_mail, remove duplicates)
-            print("\nProcessing emails with updated criteria:")
-            print("- Minimum 20 emails per user")
-            print("- Checking sent, sent_items, and _sent_mail directories")
-            print("- Removing duplicate emails")
-            print("- Filtering users after duplicate removal")
-            
-            emails_df = process_emails(maildir_path)
-            
-            # Create new train/test split
-            print("\nCreating new train/test split...")
-            train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
-            
-            print(f"\n✅ Data regeneration completed!")
-            print(f"📊 Final dataset: {len(emails_df)} emails from {len(emails_df['sender'].unique())} users")
-            print(f"📈 Training set: {len(train_df)} emails")
-            print(f"📊 Validation set: {len(validation_df)} emails")
-            print(f"📉 Test set: {len(test_df)} emails")
-            
-            response = input("\nWould you like to retrain models with the new data? (y/n): ")
-            if response.lower() == 'y':
-                baseline_model, optimized_model = train_models(emails_df)
-            else:
-                print("Data regeneration completed. You can now train models using the new data.")
-                return
-        elif choice == '1':
-            # Load emails dataset for sample prediction
-            emails_df = process_emails(maildir_path)
-            
-            # Load saved models
-            print("\n=== Loading Saved Models ===")
-            baseline_model = load_model(BASELINE_MODEL_FILE)
-            optimized_model = load_model(OPTIMIZED_MODEL_FILE)
-            
-        elif choice == '1':
-            # Load emails dataset for sample prediction
-            emails_df = process_emails(maildir_path)
-            
-            # Load saved models
-            print("\n=== Loading Saved Models ===")
-            baseline_model = load_model(BASELINE_MODEL_FILE)
-            optimized_model = load_model(OPTIMIZED_MODEL_FILE)
-            
-            if baseline_model is None or optimized_model is None:
-                print("Error loading models. Will train new models.")
-                baseline_model, optimized_model = train_models(emails_df)
-        elif choice == '3' and has_saved_splits:
-            # Recreate train/test split and retrain models
-            print(f"Using existing maildir data at: {maildir_path}")
-            emails_df = process_emails(maildir_path)
-            
-            # Remove existing split files to force recreation
-            if os.path.exists(TRAIN_DATA_FILE):
-                os.remove(TRAIN_DATA_FILE)
-            if os.path.exists(VALIDATION_DATA_FILE):
-                os.remove(VALIDATION_DATA_FILE)
-            if os.path.exists(TEST_DATA_FILE):
-                os.remove(TEST_DATA_FILE)
-            print("Removed existing train/validation/test split files.")
-            
-            baseline_model, optimized_model = train_models(emails_df)
-        else:
-            # Process emails and train models (choice == '2' or choice == '2' when no splits)
-            print(f"Using existing maildir data at: {maildir_path}")
-            emails_df = process_emails(maildir_path)
-            baseline_model, optimized_model = train_models(emails_df)
-    else:
-        # No saved models found, ask user what they want to do
-        print(f"No saved models found. Available options:")
-        choice = input("Would you like to:\n"
-                      "(1) process emails and train models\n"
-                      "(2) regenerate training/testing data only\n"
-                      "Enter 1 or 2: ")
-        
-        if choice == '2':
-            # Regenerate training/testing data only
-            print(f"Regenerating training and testing data from maildir at: {maildir_path}")
-            
-            # Remove existing processed data to force reprocessing
-            if os.path.exists(PROCESSED_DATA_FILE):
-                os.remove(PROCESSED_DATA_FILE)
-                print(f"Removed existing processed data file: {PROCESSED_DATA_FILE}")
-            
-            # Remove existing split files
-            if os.path.exists(TRAIN_DATA_FILE):
-                os.remove(TRAIN_DATA_FILE)
-                print(f"Removed existing training data file: {TRAIN_DATA_FILE}")
-            
-            if os.path.exists(TEST_DATA_FILE):
-                os.remove(TEST_DATA_FILE)
-                print(f"Removed existing test data file: {TEST_DATA_FILE}")
-            
-            # Process emails with new logic
-            print("\nProcessing emails with updated criteria:")
-            print("- Minimum 20 emails per user")
-            print("- Checking sent, sent_items, and _sent_mail directories")
-            print("- Removing duplicate emails")
-            print("- Filtering users after duplicate removal")
-            
-            emails_df = process_emails(maildir_path)
-            
-            # Create new train/test split
-            print("\nCreating new train/test split...")
-            train_df, validation_df, test_df = create_and_save_train_test_split(emails_df)
-            
-            print(f"\n✅ Data regeneration completed!")
-            print(f"📊 Final dataset: {len(emails_df)} emails from {len(emails_df['sender'].unique())} users")
-            print(f"📈 Training set: {len(train_df)} emails")
-            print(f"📊 Validation set: {len(validation_df)} emails")
-            print(f"📉 Test set: {len(test_df)} emails")
-            
-            print("Data regeneration completed. Run the script again to train models with the new data.")
-            return
-        else:
-            # Process emails and train models (default behavior)
-            print(f"Using existing maildir data at: {maildir_path}")
-            emails_df = process_emails(maildir_path)
-            baseline_model, optimized_model = train_models(emails_df)
+    # Check for "From: ... Sent: ... To: ..." pattern (all on same line)
+    if line_lower.startswith('from:') and 'sent:' in line_lower and 'to:' in line_lower:
+        return True
     
-    # Example prediction
-    print("\n=== Example Prediction ===")
-    sample_email = emails_df.iloc[0]['content']
-    sender, confidence = predict_sender(optimized_model, sample_email)
-    print(f"Sample email snippet: {sample_email[:100]}...")
-    print(f"Predicted sender: {sender} (confidence: {confidence:.4f})")
+    # Check for "On ... wrote:" pattern
+    if line_lower.startswith('on ') and 'wrote:' in line_lower:
+        return True
     
-    # Allow for user input to test the model
-    print("\n=== Interactive Testing ===")
-    while True:
-        user_input = input("\nEnter an email text to predict the sender (or 'quit' to exit): ")
-        if user_input.lower() == 'quit':
-            break
-        
-        sender, confidence = predict_sender(optimized_model, user_input)
-        print(f"Predicted sender: {sender} (confidence: {confidence:.4f})")
+    return False
 
-if __name__ == "__main__":
-    main()
+
+def _is_email_header_line(line):
+    """Check if a line looks like an email header that should be filtered out."""
+    if not line:
+        return False
+    
+    line_lower = line.lower().strip()
+    
+    # Common email headers (case insensitive)
+    header_prefixes = [
+        'from:', 'to:', 'cc:', 'bcc:', 'subject:', 'date:', 'sent:', 'received:',
+        'reply-to:', 'return-path:', 'message-id:', 'in-reply-to:', 'references:',
+        'mime-version:', 'content-type:', 'content-transfer-encoding:',
+        'x-originating-ip:', 'x-mailer:', 'importance:', 'priority:',
+        'envelope-to:', 'delivery-date:', 'received-spf:'
+    ]
+    
+    # Check if line starts with any email header
+    for prefix in header_prefixes:
+        if line_lower.startswith(prefix):
+            return True
+    
+    # Check for standalone "cc:" or "bcc:" that might appear on their own line
+    if line_lower in ['cc:', 'bcc:', 'to:', 'from:']:
+        return True
+    
+    # Check for header-like patterns (word followed by colon and content)
+    # but be careful not to catch legitimate content
+    if ':' in line and len(line) < 100:  # Limit to reasonably short lines
+        parts = line.split(':', 1)
+        if len(parts) == 2:
+            header_part = parts[0].strip().lower()
+            # Check if it looks like a header (single word or two words max)
+            if (len(header_part.split()) <= 2 and 
+                not any(char.isdigit() for char in header_part) and  # No numbers
+                len(header_part) < 20):  # Reasonable header length
+                # Additional check: if it contains names that look like recipients
+                content_part = parts[1].strip()
+                if (any(word in content_part.lower() for word in ['@', 'enron.com']) or
+                    re.match(r'^[A-Za-z\s,.-]+$', content_part[:50])):  # Looks like names/emails
+                    return True
+    
+    return False
+
+
+def _check_if_forwarded(email_path):
+    """Check if an email file contains forwarded content with efficient partial reading."""
+    try:
+        with open(email_path, 'r', encoding='utf-8', errors='ignore') as file:
+            # Read only first 1500 characters to check for forwarded indicators
+            content = file.read(1500).lower()
+            
+            # Quick string-based checks (no regex for speed)
+            forwarded_indicators = [
+                '-----original message-----',
+                'begin forwarded message',
+                'forwarded message',
+                '-----forwarded by',
+                'original message',
+                'forwarded by'
+            ]
+            
+            for indicator in forwarded_indicators:
+                if indicator in content:
+                    return True
+            
+            # Simple checks without regex
+            if 'from:' in content and 'sent:' in content and 'to:' in content:
+                return True
+            
+            if 'wrote:' in content and ('on ' in content[:500]):  # Check 'on' in first 500 chars only
+                return True
+                
+            return False
+            
+    except Exception:
+        return False
